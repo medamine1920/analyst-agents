@@ -1,0 +1,8 @@
+dbt-metricflow[dbt-duckdb]
+mcp[cli]
+pydantic
+python-dotenv
+langgraph
+langgraph-checkpoint-sqlite
+langchain-groq
+langchain-mcp-adapters

@@ -1,0 +1,11 @@
+.agent/
+.env
+__pycache__/
+*.duckdb
+*.duckdb.wal
+warehouse/target/
+warehouse/logs/
+warehouse/dbt_packages/
+logs/
+.ruff_cache/
+.pytest_cache/

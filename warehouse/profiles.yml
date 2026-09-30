@@ -1,0 +1,7 @@
+warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: analyst.duckdb
+      threads: 4

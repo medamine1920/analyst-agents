@@ -39,7 +39,6 @@ jobs:
         working-directory: warehouse
         run: dbt build
 
-      # Enable in Phase 0 once semantic models exist
-      # - name: Validate semantic layer
-      #   working-directory: warehouse
-      #   run: mf validate-configs
+      - name: Validate semantic layer
+        working-directory: warehouse
+        run: mf validate-configs

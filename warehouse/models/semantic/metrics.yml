@@ -1,0 +1,81 @@
+metrics:
+  - name: order_count
+    label: Orders
+    description: Number of orders placed.
+    type: simple
+    type_params:
+      measure: order_count
+
+  - name: revenue_pre_tax
+    label: Revenue (pre-tax)
+    description: Sum of order subtotals, excluding sales tax.
+    type: simple
+    type_params:
+      measure: subtotal
+
+  - name: revenue_with_tax
+    label: Revenue (with tax)
+    description: Sum of order totals, including sales tax paid by customers.
+    type: simple
+    type_params:
+      measure: order_total
+
+  - name: tax_collected
+    label: Tax collected
+    description: Sales tax collected on orders.
+    type: simple
+    type_params:
+      measure: tax_paid
+
+  - name: average_order_value
+    label: Average order value (pre-tax)
+    description: Pre-tax revenue divided by number of orders.
+    type: ratio
+    type_params:
+      numerator: revenue_pre_tax
+      denominator: order_count
+
+  - name: new_customers
+    label: New customers
+    description: Customers placing their first order in the period.
+    type: simple
+    type_params:
+      measure: new_customers
+
+  - name: active_customers
+    label: Active customers
+    description: Distinct customers who placed at least one order in the period.
+    type: simple
+    type_params:
+      measure: ordering_customers
+
+  - name: returning_order_share
+    label: Share of orders from returning customers
+    description: Fraction of orders that were not a customer's first order.
+    type: derived
+    type_params:
+      expr: 1.0 * (order_count - new_customers) / order_count
+      metrics:
+        - name: order_count
+        - name: new_customers
+
+  - name: items_sold
+    label: Items sold
+    description: Number of items sold.
+    type: simple
+    type_params:
+      measure: items_sold
+
+  - name: item_revenue
+    label: Item revenue (list price)
+    description: Sum of product list prices across items sold. Use for product-level breakdowns.
+    type: simple
+    type_params:
+      measure: item_revenue
+
+  - name: cumulative_revenue
+    label: Cumulative revenue (pre-tax)
+    description: Running total of pre-tax revenue.
+    type: cumulative
+    type_params:
+      measure: subtotal

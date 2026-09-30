@@ -1,0 +1,67 @@
+models:
+  - name: fct_orders
+    description: One row per order.
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: store_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stores')
+                field: store_id
+
+  - name: fct_order_items
+    description: One row per item sold.
+    columns:
+      - name: order_item_id
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: product_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['jaffle', 'beverage']
+
+  - name: dim_customers
+    description: One row per customer.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_stores
+    description: One row per store.
+    columns:
+      - name: store_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_products
+    description: One row per product.
+    columns:
+      - name: product_id
+        data_tests:
+          - unique
+          - not_null

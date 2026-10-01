@@ -1,0 +1,9 @@
+warehouse:
+  target: serve
+  outputs:
+    serve:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH') }}"
+      threads: 1
+      config_options:
+        access_mode: READ_ONLY

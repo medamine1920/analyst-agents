@@ -75,7 +75,7 @@ metrics:
 
   - name: cumulative_revenue
     label: Cumulative revenue (pre-tax)
-    description: Running total of pre-tax revenue.
+    description: Running total of pre-tax revenue, as of the end of each period.
     type: cumulative
-    type_params:
-      measure: subtotal
+    input_metric: revenue_pre_tax
+    period_agg: last

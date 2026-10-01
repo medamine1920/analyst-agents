@@ -1,0 +1,16 @@
+.git
+.github
+.agent
+.venv
+.env
+**/__pycache__
+.ruff_cache
+.pytest_cache
+tests
+scripts
+evals
+docs
+warehouse/analyst.duckdb*
+warehouse/target
+warehouse/logs
+warehouse/dbt_packages

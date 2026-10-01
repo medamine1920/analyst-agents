@@ -1,5 +1,5 @@
 dbt-metricflow[dbt-duckdb]
-mcp[cli]
+mcp[cli]>=2,<3
 pydantic
 python-dotenv
 langgraph

@@ -1,0 +1,9 @@
+services:
+  mcp:
+    build: .
+    image: analyst-agents-mcp
+    container_name: analyst-agents-mcp
+    restart: unless-stopped
+    ports:
+      # Reachable only from the server itself (and through an SSH tunnel).
+      - "127.0.0.1:8100:8000"

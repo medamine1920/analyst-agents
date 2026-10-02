@@ -86,8 +86,10 @@ semantic_models:
           time_granularity: day
 
   - name: stores
-    description: One row per store.
+    description: One row per store, including stores with no orders.
     model: ref('dim_stores')
+    defaults:
+      agg_time_dimension: opened_at
     entities:
       - name: store
         type: primary
@@ -95,6 +97,14 @@ semantic_models:
     dimensions:
       - name: store_name
         type: categorical
+      - name: opened_at
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: store_count
+        agg: count_distinct
+        expr: store_id
 
   - name: products
     description: One row per product.

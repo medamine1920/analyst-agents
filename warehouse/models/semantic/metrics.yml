@@ -79,3 +79,10 @@ metrics:
     type: cumulative
     input_metric: revenue_pre_tax
     period_agg: last
+
+  - name: store_count
+    label: Stores
+    description: Number of stores, including stores that have no orders. Combine with order_count by store__store_name to find stores without sales.
+    type: simple
+    type_params:
+      measure: store_count

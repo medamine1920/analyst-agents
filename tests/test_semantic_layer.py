@@ -21,8 +21,8 @@ def total(layer: SemanticLayer, metric: str) -> float:
 
 def test_all_metrics_are_registered(layer):
     names = {metric["name"] for metric in layer.list_metrics()}
-    assert len(names) == 11
-    assert {"revenue_pre_tax", "revenue_with_tax", "cumulative_revenue"} <= names
+    assert len(names) == 12
+    assert {"revenue_pre_tax", "revenue_with_tax", "cumulative_revenue", "store_count"} <= names
 
 
 def test_revenue_search_surfaces_both_definitions(layer):
@@ -63,3 +63,10 @@ def test_order_revenue_cannot_be_split_by_product(layer):
 def test_unknown_metric_gives_a_helpful_error(layer):
     with pytest.raises(ValueError, match="search_metrics"):
         layer.query(["revenue"])
+
+
+def test_store_count_includes_stores_without_orders(layer):
+    assert total(layer, "store_count") == 6
+    result = layer.query(["store_count", "order_count"], group_by=["store__store_name"])
+    without_orders = sorted(row[0] for row in result["rows"] if row[2] is None)
+    assert without_orders == ["Chicago", "Los Angeles", "New Orleans", "San Francisco"]

@@ -10,10 +10,12 @@ Run over HTTP (for deployment):
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -34,6 +36,19 @@ server = MCPServer(name="analyst-semantic-layer", instructions=INSTRUCTIONS)
 def layer() -> SemanticLayer:
     """Load MetricFlow once, on first use, and reuse it for every call."""
     return SemanticLayer()
+
+
+def anticipated(call: Callable[[], Any]) -> Any:
+    """Run a tool body, turning expected failures into ToolError.
+
+    MCP SDK v2 shows the model the message of a ToolError, but hides the text of any
+    other exception (treated as a crash). Bad metric names, invalid group-bys and bad
+    dates are expected mistakes an agent can fix, so their messages must get through.
+    """
+    try:
+        return call()
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 @server.tool()
@@ -59,7 +74,7 @@ def list_dimensions(metrics: list[str]) -> list[str]:
     Names follow entity__dimension, for example store__store_name or product__product_type.
     Time dimensions accept a grain suffix: metric_time__day, __week, __month, __quarter, __year.
     """
-    return layer().list_dimensions(metrics)
+    return anticipated(lambda: layer().list_dimensions(metrics))
 
 
 @server.tool()
@@ -77,8 +92,9 @@ def query_metrics(
     end_time: str | None = None,
     order_by: list[str] | None = None,
     limit: int = 100,
+    include_sql: bool = False,
 ) -> dict[str, Any]:
-    """Query one or more metrics and return columns, rows and the generated SQL.
+    """Query one or more metrics and return columns and rows.
 
     group_by: names from list_dimensions, e.g. ["metric_time__month", "store__store_name"].
     where: filters using the Dimension template, e.g. ["{{ Dimension('store__store_name') }} = 'Brooklyn'"].
@@ -86,8 +102,12 @@ def query_metrics(
     metrics, otherwise they repeat their last value up to the end of the calendar table.
     order_by: metric or group-by names; prefix with "-" for descending, e.g. ["-revenue_pre_tax"].
     limit: maximum rows (capped at 500).
+    include_sql: also return the SQL MetricFlow generated (long; only when you need to show it).
     """
-    return layer().query(metrics, group_by, where, start_time, end_time, order_by, limit)
+    result = anticipated(lambda: layer().query(metrics, group_by, where, start_time, end_time, order_by, limit))
+    if not include_sql:
+        result.pop("sql")
+    return result
 
 
 @server.custom_route("/health", methods=["GET"])

@@ -1,0 +1,10 @@
+{"id": "q01", "question": "How many orders were placed in total?", "checks": [{"number": 61948}], "notes": "simple metric", "category": "single_step"}
+{"id": "q02", "question": "Which store had the higher pre-tax revenue, and how much was it?", "checks": [{"text_any": ["philadelphia"]}, {"number": 425467}], "notes": "group by + ranking", "category": "single_step"}
+{"id": "q03", "question": "How many new customers did we get in March 2025?", "checks": [{"number": 283}], "notes": "absolute time filter", "category": "single_step"}
+{"id": "q04", "question": "What is the average order value before tax?", "checks": [{"number": 10.29, "rel_tol": 0.005}], "notes": "ratio metric", "category": "single_step"}
+{"id": "q05", "question": "How much item revenue came from beverages?", "checks": [{"number": 396567}], "notes": "join to products via entity", "category": "single_step"}
+{"id": "q06", "question": "What was revenue including tax for the Brooklyn store?", "checks": [{"number": 220455.72}], "notes": "with-tax metric + dimension filter", "category": "single_step"}
+{"id": "q07", "question": "What share of orders came from returning customers?", "checks": [{"number_any": [0.9849, 98.49], "rel_tol": 0.005}], "notes": "derived metric", "category": "single_step"}
+{"id": "q08", "question": "Which month had the highest pre-tax revenue?", "checks": [{"text_any": ["august", "2025-08"]}, {"number": 89729}], "notes": "ranking over time", "category": "single_step"}
+{"id": "q09", "question": "How many active customers did we have in July 2025?", "checks": [{"number": 724}], "notes": "count distinct + time filter", "category": "single_step"}
+{"id": "q10", "question": "What was revenue last month?", "checks": [{"number": 89729}, {"number": 94152.63}], "notes": "relative date (needs data range) + ambiguous term (both definitions expected)", "category": "single_step"}

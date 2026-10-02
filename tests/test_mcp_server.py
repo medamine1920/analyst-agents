@@ -23,7 +23,12 @@ async def test_query_tool_returns_rows_and_sql():
     async with Client(server) as client:
         result = await client.call_tool(
             "query_metrics",
-            {"metrics": ["order_count"], "group_by": ["store__store_name"], "order_by": ["-order_count"]},
+            {
+                "metrics": ["order_count"],
+                "group_by": ["store__store_name"],
+                "order_by": ["-order_count"],
+                "include_sql": True,
+            },
         )
     assert not result.is_error
     data = result.structured_content
@@ -32,7 +37,23 @@ async def test_query_tool_returns_rows_and_sql():
     assert "select" in data["sql"].lower()
 
 
-async def test_bad_metric_is_reported_as_a_tool_error():
+async def test_bad_metric_error_message_reaches_the_agent():
     async with Client(server) as client:
         result = await client.call_tool("query_metrics", {"metrics": ["revenue"]})
     assert result.is_error
+    assert "search_metrics" in result.content[0].text
+
+
+async def test_invalid_group_by_returns_metricflow_suggestions():
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "query_metrics", {"metrics": ["revenue_pre_tax"], "group_by": ["product__product_type"]}
+        )
+    assert result.is_error
+    assert "Suggestions" in result.content[0].text
+
+
+async def test_sql_is_left_out_by_default():
+    async with Client(server) as client:
+        result = await client.call_tool("query_metrics", {"metrics": ["order_count"]})
+    assert "sql" not in result.structured_content

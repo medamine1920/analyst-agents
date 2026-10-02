@@ -1,0 +1,184 @@
+{
+  "model": "openai/gpt-oss-120b",
+  "accuracy": 1.0,
+  "results": [
+    {
+      "id": "q01",
+      "question": "How many orders were placed in total?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Metric Used:** `order_count` \u2013 \u201cNumber of orders placed.\u201d\n\n**Total orders placed (2024\u201109\u201101\u202fto\u202f2025\u201108\u201131):** **61,948**.",
+      "error": null,
+      "latency_s": 6.76,
+      "tool_calls": [
+        "search_metrics",
+        "get_data_time_range",
+        "query_metrics"
+      ],
+      "llm_calls": 4,
+      "input_tokens": 3605,
+      "output_tokens": 281
+    },
+    {
+      "id": "q02",
+      "question": "Which store had the higher pre-tax revenue, and how much was it?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "The store with the higher pre\u2011tax revenue is **Philadelphia**, with a pre\u2011tax revenue of **$425,467** (metric: **revenue_pre_tax**).",
+      "error": null,
+      "latency_s": 3.65,
+      "tool_calls": [
+        "search_metrics",
+        "list_dimensions",
+        "get_data_time_range",
+        "query_metrics"
+      ],
+      "llm_calls": 5,
+      "input_tokens": 5054,
+      "output_tokens": 577
+    },
+    {
+      "id": "q03",
+      "question": "How many new customers did we get in March 2025?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Metric Used:** `new_customers` \u2013 \u201cCustomers placing their first order in the period.\u201d\n\n**Result for March\u202f2025:**  \n- New customers: **283**  \n\nThe data range covers 2024\u201109\u201101 to 2025\u201108\u201131, so March\u202f2025 is fully within the available dataset.",
+      "error": null,
+      "latency_s": 3.28,
+      "tool_calls": [
+        "search_metrics",
+        "get_data_time_range",
+        "list_dimensions",
+        "query_metrics"
+      ],
+      "llm_calls": 5,
+      "input_tokens": 4825,
+      "output_tokens": 438
+    },
+    {
+      "id": "q04",
+      "question": "What is the average order value before tax?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Metric Used:** `average_order_value` \u2013 *Average order value (pre\u2011tax)*, defined as pre\u2011tax revenue divided by the number of orders.\n\n**Result (average order value, pre\u2011tax):** **10.289985148834507**  \n\nThis value covers the full data period available, from **2024\u201109\u201101** to **2025\u201108\u201131**.",
+      "error": null,
+      "latency_s": 14.27,
+      "tool_calls": [
+        "search_metrics",
+        "get_data_time_range",
+        "query_metrics"
+      ],
+      "llm_calls": 4,
+      "input_tokens": 4090,
+      "output_tokens": 335
+    },
+    {
+      "id": "q05",
+      "question": "How much item revenue came from beverages?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Item revenue (list price) by product type**\n\n| Product type | Item revenue |\n|--------------|--------------|\n| beverage | **396,567** |\n| jaffle | 240,877 |\n\n**Metric used:** `item_revenue` \u2013 \u201cSum of product list prices across items sold. Use for product\u2011level breakdowns.\u201d",
+      "error": null,
+      "latency_s": 28.83,
+      "tool_calls": [
+        "search_metrics",
+        "list_dimensions",
+        "get_data_time_range",
+        "query_metrics"
+      ],
+      "llm_calls": 5,
+      "input_tokens": 5191,
+      "output_tokens": 451
+    },
+    {
+      "id": "q06",
+      "question": "What was revenue including tax for the Brooklyn store?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Metric Used:** `revenue_with_tax` \u2013 *\u201cSum of order totals, including sales tax paid by customers.\u201d*\n\n**Result for the Brooklyn store (2024\u201109\u201101\u202fto\u202f2025\u201108\u201131):**  \n**Revenue (with tax):** **$220,455.72**",
+      "error": null,
+      "latency_s": 17.1,
+      "tool_calls": [
+        "search_metrics",
+        "list_dimensions",
+        "get_data_time_range",
+        "query_metrics"
+      ],
+      "llm_calls": 5,
+      "input_tokens": 5007,
+      "output_tokens": 512
+    },
+    {
+      "id": "q07",
+      "question": "What share of orders came from returning customers?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Metric Used**\n\n- **returning_order_share** \u2013 *Share of orders from returning customers* (fraction of orders that were not a customer's first order).\n\n**Result**\n\n- Share of orders from returning customers: **0.9849** (\u2248\u202f98.49\u202f%).  \n\nThe data covers the period from **2024\u201109\u201101** to **2025\u201108\u201131**.",
+      "error": null,
+      "latency_s": 22.7,
+      "tool_calls": [
+        "search_metrics",
+        "get_data_time_range",
+        "query_metrics"
+      ],
+      "llm_calls": 4,
+      "input_tokens": 3667,
+      "output_tokens": 328
+    },
+    {
+      "id": "q08",
+      "question": "Which month had the highest pre-tax revenue?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "The month with the highest **pre\u2011tax revenue** was **August\u202f2025**, with a total of **$89,729**.\n\n- **Metric used:** `revenue_pre_tax` \u2013 \u201cSum of order subtotals, excluding sales tax.\u201d\n- **Result:** `2025\u201108\u201101` (month start) \u2192\u202f$89,729.0.",
+      "error": null,
+      "latency_s": 30.91,
+      "tool_calls": [
+        "search_metrics",
+        "get_data_time_range",
+        "list_dimensions",
+        "query_metrics"
+      ],
+      "llm_calls": 5,
+      "input_tokens": 5179,
+      "output_tokens": 508
+    },
+    {
+      "id": "q09",
+      "question": "How many active customers did we have in July 2025?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Metric Used:** `active_customers` \u2013 \u201cDistinct customers who placed at least one order in the period.\u201d\n\n**Result for July\u202f2025:** **724 active customers**.",
+      "error": null,
+      "latency_s": 36.39,
+      "tool_calls": [
+        "search_metrics",
+        "get_data_time_range",
+        "list_dimensions",
+        "query_metrics"
+      ],
+      "llm_calls": 5,
+      "input_tokens": 4789,
+      "output_tokens": 403
+    },
+    {
+      "id": "q10",
+      "question": "What was revenue last month?",
+      "passed": true,
+      "failed_checks": [],
+      "answer": "**Revenue for the most recent full month in the data (August\u202f2025)**  \n\n| Metric | Value (USD) | Definition |\n|--------|-------------|------------|\n| **cumulative_revenue** |\u202f89,729.0 | Running total of pre\u2011tax revenue, as of the end of each period. |\n| **item_revenue** |\u202f89,729.0 | Sum of product list prices across items sold (used for product\u2011level breakdowns). |\n| **revenue_pre_tax** |\u202f89,729.0 | Sum of order subtotals, excluding sales tax. |\n| **revenue_with_tax** |\u202f94,152.63 | Sum of order totals, including sales tax paid by customers. |\n\nAll four revenue\u2011related metrics are available for the month of\u202f2025\u201108, and the values above are taken directly from the queried data.",
+      "error": null,
+      "latency_s": 10.07,
+      "tool_calls": [
+        "get_data_time_range",
+        "search_metrics",
+        "list_dimensions",
+        "list_dimensions",
+        "query_metrics"
+      ],
+      "llm_calls": 6,
+      "input_tokens": 6164,
+      "output_tokens": 1549
+    }
+  ]
+}

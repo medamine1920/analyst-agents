@@ -5,4 +5,3 @@ python-dotenv
 langgraph
 langgraph-checkpoint-sqlite
 langchain-groq
-langchain-mcp-adapters

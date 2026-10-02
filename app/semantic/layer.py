@@ -17,6 +17,7 @@ from typing import Any
 
 from dbt_metricflow.cli.cli_configuration import CLIConfiguration
 from metricflow.engine.metricflow_engine import MetricFlowEngine, MetricFlowQueryRequest
+from metricflow_semantics.errors.error_classes import InvalidQueryException
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PROJECT_DIR = REPO_ROOT / "warehouse"
@@ -33,7 +34,12 @@ def _to_json_safe(value: Any) -> Any:
 
 
 def _parse_time(value: str | None) -> dt.datetime | None:
-    return dt.datetime.fromisoformat(value) if value else None
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid date {value!r}: use ISO format, e.g. 2025-08-31.") from exc
 
 
 class SemanticLayer:
@@ -120,7 +126,12 @@ class SemanticLayer:
             order_by_names=order_by or None,
             limit=max(1, min(limit, MAX_ROWS)),
         )
-        result = self._engine.query(request)
+        try:
+            result = self._engine.query(request)
+        except InvalidQueryException as exc:
+            # Re-raise as a plain ValueError so callers never depend on MetricFlow's exception types.
+            # MetricFlow's message lists valid alternatives, which helps an agent correct itself.
+            raise ValueError(str(exc)) from exc
         table = result.result_df
         return {
             "columns": list(table.column_names),

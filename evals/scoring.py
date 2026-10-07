@@ -15,25 +15,11 @@ from __future__ import annotations
 
 import math
 import re
-import unicodedata
+
+from app.text import normalize
 
 NUMBER = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")  # magnitudes only: "fell by -1,619" matches 1619
 DEFAULT_REL_TOL = 0.001
-
-
-def normalize(text: str) -> str:
-    """Map every Unicode space to " " and every dash or minus sign to "-"."""
-    text = unicodedata.normalize("NFKC", text)
-    out = []
-    for char in text:
-        category = unicodedata.category(char)
-        if category == "Zs":
-            out.append(" ")
-        elif category == "Pd" or char == "\u2212":
-            out.append("-")
-        else:
-            out.append(char)
-    return "".join(out)
 
 
 def numbers_in(text: str) -> list[float]:

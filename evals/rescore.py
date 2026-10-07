@@ -16,7 +16,7 @@ from evals.report import print_report
 from evals.scoring import score
 
 EVALS_DIR = Path(__file__).resolve().parent
-QUESTION_FILES = ["baseline_questions.jsonl", "questions_v2.jsonl"]
+QUESTION_FILES = ["baseline_questions.jsonl", "questions_v2.jsonl", "questions_v3_heldout.jsonl"]
 
 
 def load_checks() -> dict[str, list[dict]]:

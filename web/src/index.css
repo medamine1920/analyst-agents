@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/* Two meaning colors only: violet = the model thinks, green = code computes. Amber marks failures. */
+@theme {
+  --color-paper: #eef1f5;
+  --color-surface: #ffffff;
+  --color-ink: #1a2233;
+  --color-muted: #5b6578;
+  --color-rule: #d6dce5;
+  --color-model: #6b3fd4;
+  --color-model-tint: #efe9fc;
+  --color-code: #0f7b6c;
+  --color-code-tint: #e1f3ef;
+  --color-partial: #9a6a00;
+  --color-partial-tint: #fdf4d8;
+  --color-fail: #b54708;
+  --color-fail-tint: #fcefe4;
+  --font-display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+html {
+  background: var(--color-paper);
+}
+
+body {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-model);
+  outline-offset: 2px;
+}
+
+/* The one orchestrated motion: replayed steps arrive one after another. */
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.step-in {
+  animation: step-in 240ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-in {
+    animation: none;
+  }
+}
+
+/* Answers arrive as Markdown from the writer. */
+.prose-answer {
+  line-height: 1.6;
+}
+.prose-answer p {
+  margin: 0 0 0.75rem;
+}
+.prose-answer strong {
+  font-weight: 600;
+}
+.prose-answer em {
+  color: var(--color-muted);
+}
+.prose-answer ul,
+.prose-answer ol {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}
+.prose-answer table {
+  border-collapse: collapse;
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.875rem;
+  width: 100%;
+}
+.prose-answer th,
+.prose-answer td {
+  border-bottom: 1px solid var(--color-rule);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+.prose-answer th {
+  font-weight: 600;
+}
+.prose-answer code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}

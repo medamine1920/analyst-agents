@@ -1,0 +1,241 @@
+{
+ "id": "demo-20261007-121652-how-many-stores-do-we-have-and-which-of-them-had",
+ "question": "How many stores do we have, and which of them had no sales?",
+ "label": "Demo run: data steps are real, the model's plan and wording are scripted",
+ "created": "20261007-121652",
+ "events": [
+  {
+   "type": "start",
+   "question": "How many stores do we have, and which of them had no sales?"
+  },
+  {
+   "type": "step",
+   "node": "resolve",
+   "elapsed_s": 0.0,
+   "data": {
+    "resolution": {
+     "ambiguities": [
+      {
+       "term": "sales",
+       "metrics": [
+        "revenue_pre_tax",
+        "revenue_with_tax"
+       ]
+      }
+     ],
+     "resolved": []
+    }
+   }
+  },
+  {
+   "type": "step",
+   "node": "plan",
+   "elapsed_s": 0.0,
+   "data": {
+    "plan": {
+     "question_type": "listing",
+     "steps": [
+      {
+       "id": "all_stores",
+       "purpose": "Every store",
+       "metrics": [
+        "store_count"
+       ],
+       "group_by": [
+        "store__store_name"
+       ],
+       "filters": [],
+       "start_date": null,
+       "end_date": null
+      },
+      {
+       "id": "selling_stores",
+       "purpose": "Orders per store",
+       "metrics": [
+        "order_count"
+       ],
+       "group_by": [
+        "store__store_name"
+       ],
+       "filters": [],
+       "start_date": null,
+       "end_date": null
+      }
+     ],
+     "calculations": [],
+     "comparisons": []
+    },
+    "attempts": 1,
+    "ambiguities": [],
+    "error": null
+   }
+  },
+  {
+   "type": "step",
+   "node": "execute",
+   "elapsed_s": 0.04,
+   "data": {
+    "queries": {
+     "all_stores": {
+      "columns": [
+       "store__store_name",
+       "store_count"
+      ],
+      "rows": 6
+     },
+     "selling_stores": {
+      "columns": [
+       "store__store_name",
+       "order_count"
+      ],
+      "rows": 2
+     }
+    },
+    "errors": []
+   }
+  },
+  {
+   "type": "step",
+   "node": "analyze",
+   "elapsed_s": 0.04,
+   "data": {
+    "facts": {
+     "data_range": {
+      "first_date": "2024-09-01",
+      "last_date": "2025-08-31"
+     },
+     "definitions": {
+      "store_count": "Number of stores, including stores that have no orders. Combine with order_count by store__store_name to find stores without sales.",
+      "order_count": "Number of orders placed."
+     },
+     "computed_fields": {
+      "<metric>_share_pct": "this row's share (%) of that metric's total across the breakdown, in the same period",
+      "before / after": "the metric's value in the earlier / later step of a comparison",
+      "change": "after minus before",
+      "change_pct": "change as a percentage of before",
+      "share_of_total_change_pct": "this group's share (%) of the total change across all groups",
+      "before = 0": "the group had no activity in the earlier period (not proof that it opened then)",
+      "<metric>_gap_to_top": "how far this group is below the top group for that metric, in the same period",
+      "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
+      "groups_without_values": "groups listed in a breakdown whose metric is empty, i.e. no activity",
+      "groups_missing_between_steps": "groups present in one breakdown but absent from another: no activity there"
+     },
+     "steps": [
+      {
+       "id": "all_stores",
+       "purpose": "Every store",
+       "period": [
+        null,
+        null
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "store__store_name": "Brooklyn",
+         "store_count": 1,
+         "store_count_gap_to_top": 0
+        },
+        {
+         "store__store_name": "Chicago",
+         "store_count": 1,
+         "store_count_gap_to_top": 0
+        },
+        {
+         "store__store_name": "Los Angeles",
+         "store_count": 1,
+         "store_count_gap_to_top": 0
+        },
+        {
+         "store__store_name": "New Orleans",
+         "store_count": 1,
+         "store_count_gap_to_top": 0
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "store_count": 1,
+         "store_count_gap_to_top": 0
+        },
+        {
+         "store__store_name": "San Francisco",
+         "store_count": 1,
+         "store_count_gap_to_top": 0
+        }
+       ]
+      },
+      {
+       "id": "selling_stores",
+       "purpose": "Orders per store",
+       "period": [
+        null,
+        null
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "store__store_name": "Brooklyn",
+         "order_count": 22017,
+         "order_count_share_pct": 35.54,
+         "order_count_gap_to_top": 17914
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "order_count": 39931,
+         "order_count_share_pct": 64.46,
+         "order_count_gap_to_top": 0
+        }
+       ],
+       "totals": [
+        {
+         "order_count_total": 61948.0
+        }
+       ]
+      }
+     ],
+     "comparisons": [],
+     "groups_missing_between_steps": [
+      {
+       "present_in": "all_stores",
+       "absent_from": "selling_stores",
+       "dimension": "store__store_name",
+       "groups": [
+        "Chicago",
+        "Los Angeles",
+        "New Orleans",
+        "San Francisco"
+       ]
+      }
+     ]
+    },
+    "partial": false
+   }
+  },
+  {
+   "type": "step",
+   "node": "write",
+   "elapsed_s": 0.04,
+   "data": {
+    "draft": "We have **6 stores**. Four of them had no sales in the data: **Chicago, Los Angeles, New Orleans and San Francisco**. Only Brooklyn (22,017 orders) and Philadelphia (39,931 orders) recorded orders.\n\n*Metrics:* store_count (all stores, including those without orders) and order_count.",
+    "attempt": 1
+   }
+  },
+  {
+   "type": "step",
+   "node": "review",
+   "elapsed_s": 0.04,
+   "data": {
+    "issues": [],
+    "final": true
+   }
+  },
+  {
+   "type": "done",
+   "answer": "We have **6 stores**. Four of them had no sales in the data: **Chicago, Los Angeles, New Orleans and San Francisco**. Only Brooklyn (22,017 orders) and Philadelphia (39,931 orders) recorded orders.\n\n*Metrics:* store_count (all stores, including those without orders) and order_count.",
+   "elapsed_s": 0.04,
+   "usage": {
+    "llm_calls": 2,
+    "input_tokens": 0,
+    "output_tokens": 0
+   }
+  }
+ ]
+}

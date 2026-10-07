@@ -6,18 +6,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
-# Dependencies first: this layer is cached until requirements.txt changes.
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
 COPY warehouse ./warehouse
 
-# Build the warehouse into the image. The seeds are static, so the database
-# is fully reproducible, and the container starts ready to serve.
+
 RUN cd warehouse && DBT_PROFILES_DIR=. dbt build --quiet
 
-# Run as a non-root user. It owns /srv because dbt writes logs at startup.
+
 RUN useradd --create-home appuser && chown -R appuser /srv
 USER appuser
 

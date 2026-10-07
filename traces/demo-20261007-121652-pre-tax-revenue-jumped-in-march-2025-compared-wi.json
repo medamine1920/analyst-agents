@@ -1,0 +1,394 @@
+{
+ "id": "demo-20261007-121652-pre-tax-revenue-jumped-in-march-2025-compared-wi",
+ "question": "Pre-tax revenue jumped in March 2025 compared with February 2025. How much did it grow, and what drove the increase?",
+ "label": "Demo run: data steps are real, the model's plan and wording are scripted",
+ "created": "20261007-121652",
+ "events": [
+  {
+   "type": "start",
+   "question": "Pre-tax revenue jumped in March 2025 compared with February 2025. How much did it grow, and what drove the increase?"
+  },
+  {
+   "type": "step",
+   "node": "resolve",
+   "elapsed_s": 0.99,
+   "data": {
+    "resolution": {
+     "ambiguities": [],
+     "resolved": [
+      {
+       "term": "revenue",
+       "metrics": [
+        "revenue_pre_tax"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "step",
+   "node": "plan",
+   "elapsed_s": 0.99,
+   "data": {
+    "plan": {
+     "question_type": "change_explanation",
+     "steps": [
+      {
+       "id": "feb",
+       "purpose": "Pre-tax revenue in February 2025",
+       "metrics": [
+        "revenue_pre_tax",
+        "order_count",
+        "average_order_value"
+       ],
+       "group_by": [],
+       "filters": [],
+       "start_date": "2025-02-01",
+       "end_date": "2025-02-28"
+      },
+      {
+       "id": "mar",
+       "purpose": "Pre-tax revenue in March 2025",
+       "metrics": [
+        "revenue_pre_tax",
+        "order_count",
+        "average_order_value"
+       ],
+       "group_by": [],
+       "filters": [],
+       "start_date": "2025-03-01",
+       "end_date": "2025-03-31"
+      },
+      {
+       "id": "feb_by_store",
+       "purpose": "Pre-tax revenue in February 2025 (broken down by store)",
+       "metrics": [
+        "revenue_pre_tax",
+        "order_count",
+        "average_order_value"
+       ],
+       "group_by": [
+        "store__store_name"
+       ],
+       "filters": [],
+       "start_date": "2025-02-01",
+       "end_date": "2025-02-28"
+      },
+      {
+       "id": "mar_by_store",
+       "purpose": "Pre-tax revenue in March 2025 (broken down by store)",
+       "metrics": [
+        "revenue_pre_tax",
+        "order_count",
+        "average_order_value"
+       ],
+       "group_by": [
+        "store__store_name"
+       ],
+       "filters": [],
+       "start_date": "2025-03-01",
+       "end_date": "2025-03-31"
+      }
+     ],
+     "calculations": [],
+     "comparisons": [
+      {
+       "before_step": "feb",
+       "after_step": "mar"
+      },
+      {
+       "before_step": "feb_by_store",
+       "after_step": "mar_by_store"
+      }
+     ]
+    },
+    "attempts": 1,
+    "ambiguities": [],
+    "error": null
+   }
+  },
+  {
+   "type": "step",
+   "node": "execute",
+   "elapsed_s": 1.16,
+   "data": {
+    "queries": {
+     "feb": {
+      "columns": [
+       "revenue_pre_tax",
+       "order_count",
+       "average_order_value"
+      ],
+      "rows": 1
+     },
+     "mar": {
+      "columns": [
+       "revenue_pre_tax",
+       "order_count",
+       "average_order_value"
+      ],
+      "rows": 1
+     },
+     "feb_by_store": {
+      "columns": [
+       "store__store_name",
+       "revenue_pre_tax",
+       "order_count",
+       "average_order_value"
+      ],
+      "rows": 1
+     },
+     "mar_by_store": {
+      "columns": [
+       "store__store_name",
+       "revenue_pre_tax",
+       "order_count",
+       "average_order_value"
+      ],
+      "rows": 2
+     }
+    },
+    "errors": []
+   }
+  },
+  {
+   "type": "step",
+   "node": "analyze",
+   "elapsed_s": 1.17,
+   "data": {
+    "facts": {
+     "data_range": {
+      "first_date": "2024-09-01",
+      "last_date": "2025-08-31"
+     },
+     "definitions": {
+      "revenue_pre_tax": "Sum of order subtotals, excluding sales tax.",
+      "order_count": "Number of orders placed.",
+      "average_order_value": "Pre-tax revenue divided by number of orders."
+     },
+     "computed_fields": {
+      "<metric>_share_pct": "this row's share (%) of that metric's total across the breakdown, in the same period",
+      "before / after": "the metric's value in the earlier / later step of a comparison",
+      "change": "after minus before",
+      "change_pct": "change as a percentage of before",
+      "share_of_total_change_pct": "this group's share (%) of the total change across all groups",
+      "before = 0": "the group had no activity in the earlier period (not proof that it opened then)",
+      "<metric>_gap_to_top": "how far this group is below the top group for that metric, in the same period",
+      "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
+      "groups_without_values": "groups listed in a breakdown whose metric is empty, i.e. no activity",
+      "groups_missing_between_steps": "groups present in one breakdown but absent from another: no activity there"
+     },
+     "steps": [
+      {
+       "id": "feb",
+       "purpose": "Pre-tax revenue in February 2025",
+       "period": [
+        "2025-02-01",
+        "2025-02-28"
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "revenue_pre_tax": 37023.0,
+         "order_count": 3446,
+         "average_order_value": 10.7438
+        }
+       ]
+      },
+      {
+       "id": "mar",
+       "purpose": "Pre-tax revenue in March 2025",
+       "period": [
+        "2025-03-01",
+        "2025-03-31"
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "revenue_pre_tax": 64006.0,
+         "order_count": 6181,
+         "average_order_value": 10.3553
+        }
+       ]
+      },
+      {
+       "id": "feb_by_store",
+       "purpose": "Pre-tax revenue in February 2025 (broken down by store)",
+       "period": [
+        "2025-02-01",
+        "2025-02-28"
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "store__store_name": "Philadelphia",
+         "revenue_pre_tax": 37023.0,
+         "order_count": 3446,
+         "average_order_value": 10.7438
+        }
+       ]
+      },
+      {
+       "id": "mar_by_store",
+       "purpose": "Pre-tax revenue in March 2025 (broken down by store)",
+       "period": [
+        "2025-03-01",
+        "2025-03-31"
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "store__store_name": "Brooklyn",
+         "revenue_pre_tax": 19610.0,
+         "order_count": 2017,
+         "average_order_value": 9.7224,
+         "revenue_pre_tax_share_pct": 30.64,
+         "order_count_share_pct": 32.63,
+         "revenue_pre_tax_gap_to_top": 24786.0,
+         "order_count_gap_to_top": 2147,
+         "average_order_value_gap_to_top": 0.9395
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "revenue_pre_tax": 44396.0,
+         "order_count": 4164,
+         "average_order_value": 10.6619,
+         "revenue_pre_tax_share_pct": 69.36,
+         "order_count_share_pct": 67.37,
+         "revenue_pre_tax_gap_to_top": 0.0,
+         "order_count_gap_to_top": 0,
+         "average_order_value_gap_to_top": 0.0
+        }
+       ],
+       "totals": [
+        {
+         "revenue_pre_tax_total": 64006.0,
+         "order_count_total": 6181.0
+        }
+       ]
+      }
+     ],
+     "comparisons": [
+      {
+       "before": "feb",
+       "after": "mar",
+       "rows": [
+        {
+         "metric": "revenue_pre_tax",
+         "before": 37023.0,
+         "after": 64006.0,
+         "change": 26983.0,
+         "change_pct": 72.88,
+         "share_of_total_change_pct": 100.0
+        },
+        {
+         "metric": "order_count",
+         "before": 3446,
+         "after": 6181,
+         "change": 2735,
+         "change_pct": 79.37,
+         "share_of_total_change_pct": 100.0
+        },
+        {
+         "metric": "average_order_value",
+         "before": 10.7438,
+         "after": 10.3553,
+         "change": -0.3885,
+         "change_pct": -3.62
+        }
+       ]
+      },
+      {
+       "before": "feb_by_store",
+       "after": "mar_by_store",
+       "rows": [
+        {
+         "store__store_name": "Brooklyn",
+         "metric": "revenue_pre_tax",
+         "before": 0.0,
+         "after": 19610.0,
+         "change": 19610.0,
+         "share_of_total_change_pct": 72.68
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "metric": "revenue_pre_tax",
+         "before": 37023.0,
+         "after": 44396.0,
+         "change": 7373.0,
+         "change_pct": 19.91,
+         "share_of_total_change_pct": 27.32
+        },
+        {
+         "store__store_name": "Brooklyn",
+         "metric": "order_count",
+         "before": 0.0,
+         "after": 2017,
+         "change": 2017.0,
+         "share_of_total_change_pct": 73.75
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "metric": "order_count",
+         "before": 3446,
+         "after": 4164,
+         "change": 718,
+         "change_pct": 20.84,
+         "share_of_total_change_pct": 26.25
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "metric": "average_order_value",
+         "before": 10.7438,
+         "after": 10.6619,
+         "change": -0.0819,
+         "change_pct": -0.76
+        }
+       ]
+      }
+     ],
+     "groups_missing_between_steps": [
+      {
+       "present_in": "mar_by_store",
+       "absent_from": "feb_by_store",
+       "dimension": "store__store_name",
+       "groups": [
+        "Brooklyn"
+       ]
+      }
+     ]
+    },
+    "partial": false
+   }
+  },
+  {
+   "type": "step",
+   "node": "write",
+   "elapsed_s": 1.17,
+   "data": {
+    "draft": "Pre-tax revenue grew by **$26,983** (+72.88%), from $37,023 in February to $64,006 in March 2025.\n\n**What drove it:** Brooklyn had no orders in February and brought in **$19,610** in March, 72.68% of the increase. Philadelphia added $7,373 (27.32%). The growth came from more orders (3,446 to 6,181), while the average order value slipped from $10.74 to $10.36.\n\n*Metric:* revenue_pre_tax, the sum of order subtotals excluding sales tax.",
+    "attempt": 1
+   }
+  },
+  {
+   "type": "step",
+   "node": "review",
+   "elapsed_s": 1.17,
+   "data": {
+    "issues": [],
+    "final": true
+   }
+  },
+  {
+   "type": "done",
+   "answer": "Pre-tax revenue grew by **$26,983** (+72.88%), from $37,023 in February to $64,006 in March 2025.\n\n**What drove it:** Brooklyn had no orders in February and brought in **$19,610** in March, 72.68% of the increase. Philadelphia added $7,373 (27.32%). The growth came from more orders (3,446 to 6,181), while the average order value slipped from $10.74 to $10.36.\n\n*Metric:* revenue_pre_tax, the sum of order subtotals excluding sales tax.",
+   "elapsed_s": 1.17,
+   "usage": {
+    "llm_calls": 2,
+    "input_tokens": 0,
+    "output_tokens": 0
+   }
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+# Business glossary: how everyday words map to governed metrics.
+# A term that maps to several metrics is ambiguous unless the question uses a qualifier
+# that picks one. Longer phrases are matched first ("item revenue" before "revenue").
+entries:
+  - terms: ["item revenue"]
+    metrics: [item_revenue]
+
+  - terms: [revenue, income, sales, turnover, takings]
+    metrics: [revenue_pre_tax, revenue_with_tax]
+    qualifiers:
+      revenue_pre_tax: [pre-tax, pre tax, before tax, excluding tax, excl. tax, ex tax, subtotal]
+      revenue_with_tax: [with tax, including tax, incl. tax, after tax, tax included, tax-inclusive, order total]

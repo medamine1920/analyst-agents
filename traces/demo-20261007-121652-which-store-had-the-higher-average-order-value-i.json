@@ -1,0 +1,151 @@
+{
+ "id": "demo-20261007-121652-which-store-had-the-higher-average-order-value-i",
+ "question": "Which store had the higher average order value in 2025, and by how much?",
+ "label": "Demo run: data steps are real, the model's plan and wording are scripted",
+ "created": "20261007-121652",
+ "events": [
+  {
+   "type": "start",
+   "question": "Which store had the higher average order value in 2025, and by how much?"
+  },
+  {
+   "type": "step",
+   "node": "resolve",
+   "elapsed_s": 0.0,
+   "data": {
+    "resolution": {
+     "ambiguities": [],
+     "resolved": []
+    }
+   }
+  },
+  {
+   "type": "step",
+   "node": "plan",
+   "elapsed_s": 0.0,
+   "data": {
+    "plan": {
+     "question_type": "comparison",
+     "steps": [
+      {
+       "id": "aov_2025",
+       "purpose": "Average order value by store in 2025",
+       "metrics": [
+        "average_order_value"
+       ],
+       "group_by": [
+        "store__store_name"
+       ],
+       "filters": [],
+       "start_date": "2025-01-01",
+       "end_date": "2025-08-31"
+      }
+     ],
+     "calculations": [],
+     "comparisons": []
+    },
+    "attempts": 1,
+    "ambiguities": [],
+    "error": null
+   }
+  },
+  {
+   "type": "step",
+   "node": "execute",
+   "elapsed_s": 0.03,
+   "data": {
+    "queries": {
+     "aov_2025": {
+      "columns": [
+       "store__store_name",
+       "average_order_value"
+      ],
+      "rows": 2
+     }
+    },
+    "errors": []
+   }
+  },
+  {
+   "type": "step",
+   "node": "analyze",
+   "elapsed_s": 0.03,
+   "data": {
+    "facts": {
+     "data_range": {
+      "first_date": "2024-09-01",
+      "last_date": "2025-08-31"
+     },
+     "definitions": {
+      "average_order_value": "Pre-tax revenue divided by number of orders."
+     },
+     "computed_fields": {
+      "<metric>_share_pct": "this row's share (%) of that metric's total across the breakdown, in the same period",
+      "before / after": "the metric's value in the earlier / later step of a comparison",
+      "change": "after minus before",
+      "change_pct": "change as a percentage of before",
+      "share_of_total_change_pct": "this group's share (%) of the total change across all groups",
+      "before = 0": "the group had no activity in the earlier period (not proof that it opened then)",
+      "<metric>_gap_to_top": "how far this group is below the top group for that metric, in the same period",
+      "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
+      "groups_without_values": "groups listed in a breakdown whose metric is empty, i.e. no activity",
+      "groups_missing_between_steps": "groups present in one breakdown but absent from another: no activity there"
+     },
+     "steps": [
+      {
+       "id": "aov_2025",
+       "purpose": "Average order value by store in 2025",
+       "period": [
+        "2025-01-01",
+        "2025-08-31"
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "store__store_name": "Brooklyn",
+         "average_order_value": 9.6279,
+         "average_order_value_gap_to_top": 0.9779
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "average_order_value": 10.6057,
+         "average_order_value_gap_to_top": 0.0
+        }
+       ]
+      }
+     ],
+     "comparisons": []
+    },
+    "partial": false
+   }
+  },
+  {
+   "type": "step",
+   "node": "write",
+   "elapsed_s": 0.03,
+   "data": {
+    "draft": "**Philadelphia** had the higher average order value in 2025: **$10.61** versus $9.63 at Brooklyn, **$0.98 higher** per order.\n\n*Metric:* average_order_value, pre-tax revenue divided by the number of orders.",
+    "attempt": 1
+   }
+  },
+  {
+   "type": "step",
+   "node": "review",
+   "elapsed_s": 0.04,
+   "data": {
+    "issues": [],
+    "final": true
+   }
+  },
+  {
+   "type": "done",
+   "answer": "**Philadelphia** had the higher average order value in 2025: **$10.61** versus $9.63 at Brooklyn, **$0.98 higher** per order.\n\n*Metric:* average_order_value, pre-tax revenue divided by the number of orders.",
+   "elapsed_s": 0.04,
+   "usage": {
+    "llm_calls": 2,
+    "input_tokens": 0,
+    "output_tokens": 0
+   }
+  }
+ ]
+}

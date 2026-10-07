@@ -19,10 +19,12 @@ from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.agents.mcp_tools import mcp_tools
+from app.agents.reliability import force_final_answer, invoke_with_retry
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "openai/gpt-oss-120b"
-MAX_STEPS = 20
+MAX_TOOL_ROUNDS = 8   # after this many model turns, the next one must answer without tools
+MAX_STEPS = 25        # LangGraph safety net; the tool-round budget ends runs well before this
 
 SYSTEM_PROMPT = """\
 You are a data analyst for a coffee-and-sandwich chain. You answer questions using
@@ -49,9 +51,15 @@ def build_model() -> BaseChatModel:
 def build_agent(model: BaseChatModel, tools: list[BaseTool]):
     """The classic ReAct loop as a two-node graph: the model thinks, tools act, repeat."""
     model_with_tools = model.bind_tools(tools)
+    tool_names = [tool.name for tool in tools]
 
     async def call_model(state: MessagesState) -> dict:
-        response = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])
+        messages = [SystemMessage(SYSTEM_PROMPT), *state["messages"]]
+        rounds_used = sum(isinstance(message, AIMessage) for message in state["messages"])
+        if rounds_used >= MAX_TOOL_ROUNDS:
+            response = await force_final_answer(model, messages)
+        else:
+            response = await invoke_with_retry(model_with_tools, messages, tool_names)
         return {"messages": [response]}
 
     graph = StateGraph(MessagesState)

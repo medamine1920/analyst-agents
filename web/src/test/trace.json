@@ -1,0 +1,184 @@
+{
+ "id": "demo-20261007-121652-which-store-had-the-higher-income",
+ "question": "Which store had the higher income?",
+ "label": "Demo run: data steps are real, the model's plan and wording are scripted",
+ "created": "20261007-121652",
+ "events": [
+  {
+   "type": "start",
+   "question": "Which store had the higher income?"
+  },
+  {
+   "type": "step",
+   "node": "resolve",
+   "elapsed_s": 0.0,
+   "data": {
+    "resolution": {
+     "ambiguities": [
+      {
+       "term": "income",
+       "metrics": [
+        "revenue_pre_tax",
+        "revenue_with_tax"
+       ]
+      }
+     ],
+     "resolved": []
+    }
+   }
+  },
+  {
+   "type": "step",
+   "node": "plan",
+   "elapsed_s": 0.0,
+   "data": {
+    "plan": {
+     "question_type": "ranking",
+     "steps": [
+      {
+       "id": "by_store",
+       "purpose": "Revenue by store",
+       "metrics": [
+        "revenue_pre_tax",
+        "revenue_with_tax"
+       ],
+       "group_by": [
+        "store__store_name"
+       ],
+       "filters": [],
+       "start_date": null,
+       "end_date": null
+      }
+     ],
+     "calculations": [],
+     "comparisons": []
+    },
+    "attempts": 1,
+    "ambiguities": [
+     {
+      "term": "income",
+      "metrics": [
+       "revenue_pre_tax",
+       "revenue_with_tax"
+      ]
+     }
+    ],
+    "error": null
+   }
+  },
+  {
+   "type": "step",
+   "node": "execute",
+   "elapsed_s": 0.03,
+   "data": {
+    "queries": {
+     "by_store": {
+      "columns": [
+       "store__store_name",
+       "revenue_pre_tax",
+       "revenue_with_tax"
+      ],
+      "rows": 2
+     }
+    },
+    "errors": []
+   }
+  },
+  {
+   "type": "step",
+   "node": "analyze",
+   "elapsed_s": 0.03,
+   "data": {
+    "facts": {
+     "data_range": {
+      "first_date": "2024-09-01",
+      "last_date": "2025-08-31"
+     },
+     "definitions": {
+      "revenue_pre_tax": "Sum of order subtotals, excluding sales tax.",
+      "revenue_with_tax": "Sum of order totals, including sales tax paid by customers."
+     },
+     "computed_fields": {
+      "<metric>_share_pct": "this row's share (%) of that metric's total across the breakdown, in the same period",
+      "before / after": "the metric's value in the earlier / later step of a comparison",
+      "change": "after minus before",
+      "change_pct": "change as a percentage of before",
+      "share_of_total_change_pct": "this group's share (%) of the total change across all groups",
+      "before = 0": "the group had no activity in the earlier period (not proof that it opened then)",
+      "<metric>_gap_to_top": "how far this group is below the top group for that metric, in the same period",
+      "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
+      "groups_without_values": "groups listed in a breakdown whose metric is empty, i.e. no activity",
+      "groups_missing_between_steps": "groups present in one breakdown but absent from another: no activity there"
+     },
+     "steps": [
+      {
+       "id": "by_store",
+       "purpose": "Revenue by store",
+       "period": [
+        null,
+        null
+       ],
+       "filters": [],
+       "rows": [
+        {
+         "store__store_name": "Brooklyn",
+         "revenue_pre_tax": 211977.0,
+         "revenue_with_tax": 220455.72,
+         "revenue_pre_tax_share_pct": 33.25,
+         "revenue_with_tax_share_pct": 32.83,
+         "revenue_pre_tax_gap_to_top": 213490.0,
+         "revenue_with_tax_gap_to_top": 230513.93
+        },
+        {
+         "store__store_name": "Philadelphia",
+         "revenue_pre_tax": 425467.0,
+         "revenue_with_tax": 450969.65,
+         "revenue_pre_tax_share_pct": 66.75,
+         "revenue_with_tax_share_pct": 67.17,
+         "revenue_pre_tax_gap_to_top": 0.0,
+         "revenue_with_tax_gap_to_top": 0.0
+        }
+       ],
+       "totals": [
+        {
+         "revenue_pre_tax_total": 637444.0,
+         "revenue_with_tax_total": 671425.37
+        }
+       ]
+      }
+     ],
+     "comparisons": []
+    },
+    "partial": false
+   }
+  },
+  {
+   "type": "step",
+   "node": "write",
+   "elapsed_s": 0.03,
+   "data": {
+    "draft": "**Philadelphia** had the higher income under both definitions of revenue:\n\n| Store | Revenue (pre-tax) | Revenue (with tax) |\n|---|---|---|\n| Philadelphia | $425,467 | $450,969.65 |\n| Brooklyn | $211,977 | $220,455.72 |\n\n\"Income\" can mean revenue before tax (revenue_pre_tax) or including the tax customers paid (revenue_with_tax), so both are shown.",
+    "attempt": 1
+   }
+  },
+  {
+   "type": "step",
+   "node": "review",
+   "elapsed_s": 0.03,
+   "data": {
+    "issues": [],
+    "final": true
+   }
+  },
+  {
+   "type": "done",
+   "answer": "**Philadelphia** had the higher income under both definitions of revenue:\n\n| Store | Revenue (pre-tax) | Revenue (with tax) |\n|---|---|---|\n| Philadelphia | $425,467 | $450,969.65 |\n| Brooklyn | $211,977 | $220,455.72 |\n\n\"Income\" can mean revenue before tax (revenue_pre_tax) or including the tax customers paid (revenue_with_tax), so both are shown.",
+   "elapsed_s": 0.03,
+   "usage": {
+    "llm_calls": 2,
+    "input_tokens": 0,
+    "output_tokens": 0
+   }
+  }
+ ]
+}

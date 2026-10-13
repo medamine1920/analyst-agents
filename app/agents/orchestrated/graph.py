@@ -306,6 +306,12 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
 def groq_model():
     from langchain_groq import ChatGroq
 
+    if not os.environ.get("GROQ_API_KEY"):  # also replaces a variable that is set but empty
+        load_dotenv(REPO_ROOT / ".env", override=True)
+    if not os.environ.get("GROQ_API_KEY"):
+        raise RuntimeError(
+            f"No Groq key found. Put GROQ_API_KEY=<your key> in {REPO_ROOT / '.env'} and restart the server, "
+            "or run the console without a key: uvicorn scripts.demo_console:app --port 8001")
     return ChatGroq(model=os.environ.get("GROQ_MODEL", DEFAULT_MODEL), temperature=0, max_retries=5)
 
 

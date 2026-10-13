@@ -183,3 +183,14 @@ def test_the_cache_is_off_unless_asked_for(monkeypatch, tmp_path):
     assert cache_dir().name == ".llm_cache"
     monkeypatch.setenv("LLM_CACHE", str(tmp_path))
     assert cache_dir() == tmp_path
+
+
+def test_a_missing_or_empty_key_is_explained(monkeypatch, tmp_path):
+    from app.agents.orchestrated import graph
+
+    monkeypatch.setattr(graph, "REPO_ROOT", tmp_path)  # a folder without a .env file
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    with pytest.raises(RuntimeError, match="No Groq key found"):
+        graph.groq_model()
+    (tmp_path / ".env").write_text("GROQ_API_KEY=test-key-not-real")
+    assert graph.groq_model().groq_api_key.get_secret_value() == "test-key-not-real"  # empty variable replaced

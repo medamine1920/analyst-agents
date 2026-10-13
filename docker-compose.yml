@@ -7,3 +7,32 @@ services:
     ports:
       # Reachable only from the server itself (and through an SSH tunnel).
       - "127.0.0.1:8100:8000"
+
+  # The Analyst Console (API + web app), from the same image with another start command.
+  console:
+    build: .
+    image: analyst-agents-mcp
+    container_name: analyst-agents-console
+    restart: unless-stopped
+    command: ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      # Read from the .env file next to this compose file on the server (never committed, never in
+      # the image). Without a key the console still starts; live questions explain what is missing.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      # The console starts its own MCP server as a child process, over stdio.
+      MCP_TRANSPORT: stdio
+    volumes:
+      - console-checkpoints:/srv/checkpoints
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=8)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    ports:
+      # Same rule as above: local only. Anyone who can reach it can spend the Groq quota.
+      - "127.0.0.1:8200:8000"
+
+volumes:
+  console-checkpoints:

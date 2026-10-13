@@ -1,3 +1,14 @@
+# One image, two services (see docker-compose.yml): the MCP server and the Analyst Console.
+
+# Stage 1: build the console's web app. Only the built files go into the final image.
+FROM node:22-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web ./
+RUN npm run build
+
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -14,6 +25,13 @@ COPY warehouse ./warehouse
 
 
 RUN cd warehouse && DBT_PROFILES_DIR=. dbt build --quiet
+
+# What the console needs on top of the MCP server: eval results, demo traces, the built web app,
+# and a folder for paused runs (a volume in docker-compose.yml, so pauses survive a redeploy).
+COPY evals ./evals
+COPY traces ./traces
+COPY --from=web /web/dist ./web/dist
+RUN mkdir -p checkpoints
 
 
 RUN useradd --create-home appuser && chown -R appuser /srv

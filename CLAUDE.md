@@ -6,7 +6,7 @@ Multi-agent data analyst that answers multi-step business questions over a gover
 
 - Windows laptop, Python 3.12, virtual env `.agent`. Activate in PowerShell: `.agent\Scripts\Activate.ps1`; in Git Bash: `source .agent/Scripts/activate`.
 - LLM: Groq free tier only, model `openai/gpt-oss-120b` (`GROQ_API_KEY` in `.env`, never committed; `GROQ_MODEL` overrides). Limits: 8K tokens/minute, 200K tokens/day. Gemini is not available from the user's location.
-- Server: Hetzner CX22 (Ubuntu 24.04), reachable only over Tailscale; its address is in the `DEPLOY_HOST` GitHub secret. Deployed by CI (`scripts/deploy.sh` via a forced-command SSH key), never by hand.
+- Server: Hetzner CX22 (Ubuntu 24.04), reachable only over Tailscale; its address is in the `DEPLOY_HOST` GitHub secret. Deployed by CI (`scripts/deploy.sh` via a forced-command SSH key), never by hand. Two containers from one image: `analyst-agents-mcp` (`127.0.0.1:8100`) and `analyst-agents-console` (`127.0.0.1:8200`). The console's Groq key comes from `~/apps/analyst-agents/.env` on the server (git-ignored, survives deploys, never in the image); after changing it, run `docker compose up -d` there.
 - Repo: github.com/medamine1920/analyst-agents.
 
 ## Architecture (bottom to top; each layer reads only the one below)
@@ -20,7 +20,7 @@ Multi-agent data analyst that answers multi-step business questions over a gover
    - `baseline.py`: LangGraph ReAct loop (the comparison point). `reliability.py`: shared harness (retry malformed tool calls, 8-round budget, then a forced answer). `mcp_tools.py`: own MCP → LangChain adapter.
    - `orchestrated/`: `resolve` (glossary) → `plan` (LLM, JSON-schema `Plan`, validated) → `clarify` (code; only in interactive runs with an active ambiguity: pauses with `interrupt()` and asks the user which definition is meant) → `execute` (code, MCP) → `analyze` (code) → `write` (LLM) → `review` (code). Replan up to 3 attempts, rewrite once. Files: `glossary.py` (+ `app/semantic/glossary.yml`), `plan.py`, `gateway.py`, `analysis.py`, `review.py`, `graph.py`, `cache.py` (development-only disk cache of model answers).
 7. **Evals** `evals/`: question sets v1 (10), v2 (12), v3 held-out (8); `scoring.py`, `run_eval.py`, `agents.py`, `report.py`, `rescore.py`; results in `evals/results/*.jsonl`.
-8. **Console** (Phase 7a): FastAPI `app/api/` (metrics, evals, saved traces, `POST /api/ask` streaming each step as server-sent events and saving a replayable trace; with `interactive: true` it can end with an `approval` event, and `POST /api/resume {thread_id, choice}` continues the run) + React 19 / Vite 8 / Tailwind 4 in `web/` (Node 20.19+). Demo traces `traces/demo-*.json` use real data with scripted model steps and are labeled as demos. Not deployed to the server yet.
+8. **Console** (Phase 7a): FastAPI `app/api/` (metrics, evals, saved traces, `POST /api/ask` streaming each step as server-sent events and saving a replayable trace; with `interactive: true` it can end with an `approval` event, and `POST /api/resume {thread_id, choice}` continues the run) + React 19 / Vite 8 / Tailwind 4 in `web/` (Node 20.19+). Demo traces `traces/demo-*.json` use real data with scripted model steps and are labeled as demos. Deployed as the `console` service in `docker-compose.yml` (serves the built web app and the API on one port; starts its own MCP server over stdio).
 
 Operational database (Phase 4): LangGraph checkpoints in SQLite, `checkpoints/analyst.sqlite` (`CHECKPOINT_DB` overrides; not committed). Used by the console API and the interactive command line; evals run without it. The steps already streamed for a paused console run are kept in `traces/paused/`. Postgres later.
 
@@ -34,7 +34,7 @@ mf query --metrics revenue_pre_tax --group-by store__store_name --explain
 
 # Repo root
 ruff check .
-pytest -q                                    # 71 tests (unit + integration)
+pytest -q                                    # 72 tests (unit + integration)
 pytest -q -m "not integration"
 python -m app.agents.orchestrated.graph "<question>"
 python -m app.agents.orchestrated.graph --interactive "<question>"   # asks which definition is meant
@@ -90,13 +90,13 @@ The 100% on v2 is a regression check, not a headline, and it is not the whole tr
 
 Done since the last commit (`777bf42`), all uncommitted: v2 re-measure (100% / 100%, then the m06 miss above); Phase 4 human approval (graph, command line, API, console); the m06 fix (`ensure_drilldown` adds the period × category query when a plan splits them, `top_period` in the facts gives the top period with its own rows, every step states the dates it covers); eval results record the plan; a development cache for model answers (`LLM_CACHE=1`); a scripted console (`scripts/demo_console.py`). m06 passed 3/3 live after the fix, but none of those three plans had the split shape, so the fix itself is proven only by the scripted test.
 
-1. **Commit and push** everything above (pushing deploys through CI).
+1. **Confirm the console deploy** (added 2026-10-13): the Docker build with the web stage was not testable locally (no Docker daemon on the laptop), so check the Actions run and `docker ps` on the server after the first push.
 2. **Re-measure v2 in full** on the current code: `python -m evals.run_eval --agent orchestrated --set v2 --repeats 3`. It takes most of a day's quota (about 5,000 tokens per run now), so do it on a day with no other live testing.
 3. **Put the dev log back.** `docs/DEV_LOG.md` here holds only the entries from 2026-10-09 onwards; merge them into the original file (stories 40 and 41 included).
 4. **Review the console by eye** (approval card, "You" step, spacing): start the scripted console and `npm run dev`. It has only been checked as text and behavior.
 5. **Phase 5, memory:** remember resolved definitions per team so the same ambiguity is not asked twice. The `choices` field in the graph state is the place to pre-fill.
 6. **Phase 6, traces and cost:** Arize Phoenix (OpenTelemetry) per step; cost per question.
-7. **Phase 7, polish:** README (architecture diagram, results table, demo GIF); deploy the console behind Tailscale or auth; a fresh held-out set (v4) to confirm the fixes generalize; final interview-story compilation; resume line update.
+7. **Phase 7, polish:** README (architecture diagram, results table, demo GIF); put the deployed console behind Tailscale or auth (today it is bound to the server's localhost only); a fresh held-out set (v4) to confirm the fixes generalize; final interview-story compilation; resume line update.
 
 Known gaps: paused runs that are never answered stay in `checkpoints/` and `traces/paused/` (no expiry yet); a replan that reuses an earlier choice has no test; the reviewer checks that numbers exist in the facts, not that they are the right numbers for the sentence (the m06 miss passed review), so `top_period` narrows that hole without closing it; the virtual env runs Python 3.11, not the 3.12 named above.
 

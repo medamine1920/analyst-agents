@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from langgraph.types import Command
+
 TRACES_DIR = Path(__file__).resolve().parents[2] / "traces"
 
 
@@ -32,7 +34,11 @@ def summarize(node: str, update: dict) -> dict:
         return {"resolution": update.get("resolution", {})}
     if node == "plan":
         return {"plan": update.get("plan"), "attempts": update.get("plan_attempts"),
-                "ambiguities": update.get("ambiguities", []), "error": update.get("error")}
+                "ambiguities": update.get("ambiguities", []), "error": update.get("error"),
+                "waiting_for": [a["term"] for a in update.get("pending_ambiguities", [])]}
+    if node == "clarify":
+        return {"choices": update.get("choices", {}), "plan": update.get("plan"),
+                "ambiguities": update.get("ambiguities", [])}
     if node == "execute":
         results = update.get("results", {})
         return {"queries": {step: {"columns": r.get("columns", []), "rows": r.get("row_count", 0)}
@@ -49,19 +55,34 @@ def summarize(node: str, update: dict) -> dict:
     return update
 
 
-async def stream_trace(graph: Any, question: str) -> AsyncIterator[dict]:
-    """Yield one event per graph step, then a final summary event."""
-    started = time.perf_counter()
+async def stream_trace(graph: Any, question: str, *, thread_id: str | None = None, interactive: bool = False,
+                       resume: Any = None, elapsed_before: float = 0.0) -> AsyncIterator[dict]:
+    """Yield one event per graph step, then a final summary event.
+
+    A run that pauses to ask the user something ends with an "approval" event instead of "done".
+    Pass the user's answer as `resume` (with the same thread_id) to continue it; `elapsed_before`
+    is the working time already spent, so the time spent waiting for the user is not counted.
+    """
+    started = time.perf_counter() - elapsed_before
     usage: list[dict] = []
     answer = ""
-    yield {"type": "start", "question": question}
-    async for chunk in graph.astream({"question": question}, stream_mode="updates"):
+    config = {"configurable": {"thread_id": thread_id}} if thread_id else None
+    if resume is None:
+        payload: Any = {"question": question, "interactive": interactive}
+        yield {"type": "start", "question": question, "thread_id": thread_id}
+    else:
+        payload = Command(resume=resume)
+    async for chunk in graph.astream(payload, config, stream_mode="updates"):
         for node, update in chunk.items():
+            elapsed = round(time.perf_counter() - started, 2)
+            if node == "__interrupt__":
+                yield {"type": "approval", "thread_id": thread_id, "elapsed_s": elapsed,
+                       **jsonable(update[0].value)}
+                return
             update = update or {}
             usage = update.get("usage", usage)
             answer = update.get("answer", answer)
-            yield {"type": "step", "node": node, "elapsed_s": round(time.perf_counter() - started, 2),
-                   "data": jsonable(summarize(node, update))}
+            yield {"type": "step", "node": node, "elapsed_s": elapsed, "data": jsonable(summarize(node, update))}
     yield {"type": "done", "answer": answer, "elapsed_s": round(time.perf_counter() - started, 2),
            "usage": usage_totals(usage)}
 

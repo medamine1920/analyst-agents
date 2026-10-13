@@ -4,6 +4,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export const STEPS = {
   resolve: { title: "Check business terms", kind: "code" },
   plan: { title: "Plan the queries", kind: "model" },
+  clarify: { title: "Ask which definition is meant", kind: "person" },
   execute: { title: "Run the queries", kind: "code" },
   analyze: { title: "Compute the numbers", kind: "code" },
   analyze_partial: { title: "Compute the numbers from the queries that worked", kind: "code" },

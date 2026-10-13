@@ -70,3 +70,51 @@ test("evaluations view compares agents and opens the saved answers behind a scor
   fireEvent.click(screen.getByRole("button", { name: "0/3" }));
   expect(await screen.findByText(/Missing from the answer/)).toBeTruthy();
 });
+
+/** A fetch response whose body streams the given events as server-sent events. */
+function sseResponse(events) {
+  const chunks = [new TextEncoder().encode(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""))];
+  const read = async () => (chunks.length ? { value: chunks.shift(), done: false } : { value: undefined, done: true });
+  return { ok: true, body: { getReader: () => ({ read }) } };
+}
+
+test("a live question pauses on an ambiguous term and resumes with the chosen definition", async () => {
+  const steps = trace.events.filter((e) => e.type === "step");
+  const done = trace.events.find((e) => e.type === "done");
+  const approval = {
+    type: "approval",
+    thread_id: "a".repeat(32),
+    elapsed_s: 2,
+    questions: [
+      {
+        term: "income",
+        options: [
+          { metric: "revenue_pre_tax", label: "Revenue (pre-tax)", description: "Order subtotals." },
+          { metric: "revenue_with_tax", label: "Revenue (with tax)", description: "Order totals." },
+        ],
+      },
+    ],
+  };
+  const clarify = { type: "step", node: "clarify", elapsed_s: 2, data: { choices: { income: "revenue_with_tax" }, plan: steps[1].data.plan } };
+  const posts = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (!options) return { ok: true, json: async () => [] };
+    posts.push([url, JSON.parse(options.body)]);
+    return url === "/api/ask" ? sseResponse([...steps.slice(0, 2), approval]) : sseResponse([clarify, ...steps.slice(2), done]);
+  });
+
+  render(<Ask />);
+  fireEvent.click(screen.getByRole("radio", { name: "Ask the agent live" }));
+  fireEvent.change(screen.getByLabelText(/Ask about orders/), { target: { value: "Which store had the higher income?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  expect(await screen.findByText(/has several definitions. Which one do you mean/)).toBeTruthy();
+  expect(screen.getByText(/Paused: waiting for your choice/)).toBeTruthy();
+  expect(posts[0]).toEqual(["/api/ask", { question: "Which store had the higher income?", interactive: true }]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Revenue \(with tax\)/ }));
+  expect(await screen.findByText("Ask which definition is meant")).toBeTruthy();
+  expect(posts[1]).toEqual(["/api/resume", { thread_id: "a".repeat(32), choice: { income: "revenue_with_tax" } }]);
+  await waitFor(() => expect(screen.getByText(/every number in this answer comes from the computed results/)).toBeTruthy());
+  expect(screen.queryByText(/Which one do you mean/)).toBeNull();
+});

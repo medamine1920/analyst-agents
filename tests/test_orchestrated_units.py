@@ -1,10 +1,20 @@
 """Unit tests for the orchestrated agent's deterministic parts: no database or model needed."""
 
+import asyncio
+
 import pytest
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.orchestrated.analysis import compare, evaluate
+from app.agents.orchestrated.cache import cache_dir, cached_plan_fn, cached_write_fn
 from app.agents.orchestrated.glossary import resolve_terms
-from app.agents.orchestrated.plan import Plan, QueryStep, validate_plan
+from app.agents.orchestrated.plan import (
+    Plan,
+    QueryStep,
+    read_choices,
+    settle_ambiguities,
+    validate_plan,
+)
 from app.agents.orchestrated.review import review_answer
 
 
@@ -101,3 +111,75 @@ def test_cross_step_formula_is_rejected_at_planning_time_with_a_pointer_to_compa
                                  expression="q2_2025.revenue_pre_tax / q1_2025.revenue_pre_tax - 1")])
     errors = validate_plan(plan, {"revenue_pre_tax"}, lambda metrics: ["metric_time__day"])
     assert any("add a comparison" in e for e in errors)
+
+
+INCOME = {"term": "income", "metrics": ["revenue_pre_tax", "revenue_with_tax"]}
+
+
+def both_definitions_plan():
+    return Plan.model_validate({"question_type": "comparison", "steps": [
+        {"id": "s", "purpose": "", "metrics": ["tax_collected", "revenue_pre_tax", "revenue_with_tax"]}],
+        "calculations": [{"name": "rate_pre", "step_id": "s", "expression": "tax_collected / revenue_pre_tax"},
+                         {"name": "rate_with", "step_id": "s", "expression": "tax_collected / revenue_with_tax"}]})
+
+
+def test_a_chosen_definition_replaces_the_others_everywhere():
+    plan, still_open = settle_ambiguities(both_definitions_plan(), [INCOME], {"income": "revenue_with_tax"})
+    assert still_open == [] and plan.steps[0].metrics == ["tax_collected", "revenue_with_tax"]
+    assert [c.expression for c in plan.calculations] == ["tax_collected / revenue_with_tax"]
+
+
+def test_without_a_choice_every_definition_is_kept():
+    plan = Plan.model_validate({"question_type": "lookup", "steps": [
+        {"id": "s", "purpose": "", "metrics": ["revenue_pre_tax"]}]})
+    plan, still_open = settle_ambiguities(plan, [INCOME], {"income": "all"})
+    assert still_open == [INCOME] and plan.steps[0].metrics == ["revenue_pre_tax", "revenue_with_tax"]
+
+
+def test_answers_that_are_not_a_definition_fall_back_to_all():
+    assert read_choices("revenue_with_tax", [INCOME]) == {"income": "revenue_with_tax"}
+    assert read_choices({"income": "revenue_pre_tax"}, [INCOME]) == {"income": "revenue_pre_tax"}
+    for answer in ("order_count", {"other": "revenue_pre_tax"}, None, 3):
+        assert read_choices(answer, [INCOME]) == {"income": "all"}
+
+
+def test_cached_answers_are_reused_and_failures_are_not(tmp_path):
+    async def scenario():
+        calls = {"plan": 0, "write": 0}
+        plan = Plan.model_validate({"question_type": "lookup", "steps": [
+            {"id": "s", "purpose": "", "metrics": ["order_count"]}]})
+
+        async def plan_fn(messages):
+            calls["plan"] += 1
+            return (None, "not JSON", {}) if calls["plan"] == 1 else (plan, None, {"input_tokens": 3000})
+
+        async def write_fn(messages):
+            calls["write"] += 1
+            return "There were 61,948 orders.", {"input_tokens": 1000}
+
+        cached_plan = cached_plan_fn(plan_fn, "model-a", tmp_path)
+        cached_write = cached_write_fn(write_fn, "model-a", tmp_path)
+        question = [SystemMessage("rules"), HumanMessage("How many orders?")]
+        assert (await cached_plan(question))[0] is None  # the failure is passed on, not stored
+        assert (await cached_plan(question))[2] == {"input_tokens": 3000}
+        assert await cached_plan(question) == (plan, None, {})  # from disk: no call, no tokens
+        assert calls["plan"] == 2
+        await cached_write(question)
+        assert await cached_write(question) == ("There were 61,948 orders.", {}) and calls["write"] == 1
+        # Other messages or another model are a different entry.
+        await cached_write([SystemMessage("rules"), HumanMessage("How many customers?")])
+        await cached_write_fn(write_fn, "model-b", tmp_path)(question)
+        assert calls["write"] == 3
+
+    asyncio.run(scenario())
+
+
+def test_the_cache_is_off_unless_asked_for(monkeypatch, tmp_path):
+    monkeypatch.delenv("LLM_CACHE", raising=False)
+    assert cache_dir() is None
+    monkeypatch.setenv("LLM_CACHE", "0")
+    assert cache_dir() is None
+    monkeypatch.setenv("LLM_CACHE", "1")
+    assert cache_dir().name == ".llm_cache"
+    monkeypatch.setenv("LLM_CACHE", str(tmp_path))
+    assert cache_dir() == tmp_path

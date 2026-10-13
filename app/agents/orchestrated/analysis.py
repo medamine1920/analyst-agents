@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import operator
 
+from app.agents.orchestrated.gateway import MAX_ROWS_PER_STEP
 from app.agents.orchestrated.plan import Plan, QueryStep, is_time_dimension
 
 OPERATORS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}
@@ -97,6 +98,33 @@ def add_gaps(step: QueryStep, rows: list[dict]) -> None:
                 row[f"{metric}_gap_to_top"] = round(tops[key] - value, 4)
 
 
+def top_periods(step: QueryStep, rows: list[dict], totals: list[dict]) -> list[dict]:
+    """For a period x category breakdown: the period with the highest total, and its rows.
+
+    Answers "which month was highest, and where did most of it come from?" in one place, so the
+    writer never pairs the top period with a breakdown of some other period.
+    """
+    times = [g for g in step.group_by if is_time_dimension(g)]
+    if len(times) != 1 or not totals or len(rows) >= MAX_ROWS_PER_STEP:  # a cut-off result may hide the top
+        return []
+    found = []
+    for metric in step.metrics:
+        ranked = [t for t in totals if t.get(f"{metric}_total") is not None]
+        if not ranked:
+            continue
+        best = max(ranked, key=lambda t: t[f"{metric}_total"])
+        found.append({"metric": metric, times[0]: best[times[0]], "total": best[f"{metric}_total"],
+                      "rows": [{k: _rounded(v) for k, v in row.items() if k != times[0]}
+                               for row in rows if row.get(times[0]) == best[times[0]]]})
+    return found
+
+
+def describe_period(step: QueryStep) -> str:
+    if not step.start_date and not step.end_date:
+        return "all dates in the data"
+    return f"{step.start_date or 'the first date in the data'} to {step.end_date or 'the last date in the data'}"
+
+
 def groups_without_values(step: QueryStep, rows: list[dict]) -> list[dict]:
     """Groups present in a breakdown whose metric value is empty (e.g. a store with no orders)."""
     categories = [g for g in step.group_by if not is_time_dimension(g)]
@@ -168,6 +196,9 @@ FIELD_GUIDE = {
     "before = 0": "the group had no activity in the earlier period (not proof that it opened then)",
     "<metric>_gap_to_top": "how far this group is below the top group for that metric, in the same period",
     "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
+    "top_period": "the period with the highest total of a metric, with that period's rows: use these rows "
+                  "(not a breakdown covering other dates) to say what the top period was made of",
+    "period": "the dates a step covers; a step covering all dates says nothing about one month or week",
     "groups_without_values": "groups listed in a breakdown whose metric is empty, i.e. no activity",
     "groups_missing_between_steps": "groups present in one breakdown but absent from another: no activity there",
 }
@@ -185,6 +216,7 @@ def build_facts(plan: Plan, results: dict[str, dict], catalog: dict[str, dict], 
     totals_by_step = {step.id: add_shares(step, rows_by_step[step.id], additive) for step in plan.steps}
     for step in plan.steps:
         add_gaps(step, rows_by_step[step.id])
+    tops = {step.id: top_periods(step, rows_by_step[step.id], totals_by_step[step.id]) for step in plan.steps}
     empty_groups = [found for step in plan.steps for found in groups_without_values(step, rows_by_step[step.id])]
     missing_groups = groups_missing_between(plan.steps, rows_by_step)
     calculation_errors = []
@@ -206,10 +238,11 @@ def build_facts(plan: Plan, results: dict[str, dict], catalog: dict[str, dict], 
         "definitions": {m: catalog[m]["description"] for s in plan.steps for m in s.metrics},
         "computed_fields": {**FIELD_GUIDE, **{c.name: f"computed as {c.expression}" for c in plan.calculations}},
         "steps": [
-            {"id": s.id, "purpose": s.purpose, "period": [s.start_date, s.end_date],
+            {"id": s.id, "purpose": s.purpose, "period": describe_period(s),
              "filters": [f.model_dump() for f in s.filters],
              "rows": [{k: _rounded(v) for k, v in row.items()} for row in rows_by_step[s.id]],
-             **({"totals": totals_by_step[s.id]} if totals_by_step[s.id] else {})}
+             **({"totals": totals_by_step[s.id]} if totals_by_step[s.id] else {}),
+             **({"top_period": tops[s.id]} if tops[s.id] else {})}
             for s in plan.steps
         ],
         "comparisons": comparisons,

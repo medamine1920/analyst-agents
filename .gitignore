@@ -9,3 +9,5 @@ warehouse/dbt_packages/
 logs/
 .ruff_cache/
 .pytest_cache/
+checkpoints/
+.llm_cache/

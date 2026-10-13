@@ -7,13 +7,15 @@ export function Ident({ children }) {
   );
 }
 
+const KINDS = {
+  model: { text: "Model", style: "bg-model-tint text-model" },
+  code: { text: "Code", style: "bg-code-tint text-code" },
+  person: { text: "You", style: "bg-paper text-ink" },
+};
+
 export function KindTag({ kind }) {
-  const style = kind === "model" ? "bg-model-tint text-model" : "bg-code-tint text-code";
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${style}`}>
-      {kind === "model" ? "Model" : "Code"}
-    </span>
-  );
+  const { text, style } = KINDS[kind] ?? KINDS.code;
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${style}`}>{text}</span>;
 }
 
 export function DataTable({ rows, limit = 12 }) {

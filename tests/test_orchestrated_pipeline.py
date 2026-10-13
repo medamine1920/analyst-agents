@@ -4,11 +4,19 @@ If the planner plans well, code must produce the golden numbers; when the planne
 makes a mistake, the graph must catch it and give it a bounded second chance.
 """
 
+from contextlib import asynccontextmanager
+
 import pytest
+from langgraph.types import Command
 from mcp import Client
 
 from app.agents.orchestrated.gateway import McpGateway
-from app.agents.orchestrated.graph import build_graph
+from app.agents.orchestrated.graph import (
+    build_graph,
+    open_checkpointer,
+    pending_approval,
+    thread_config,
+)
 from app.agents.orchestrated.plan import Plan
 from app.agents.orchestrated.review import supported_numbers
 from app.mcp_server.server import server
@@ -156,3 +164,88 @@ async def test_a_rejected_formula_gets_another_planning_attempt():
         {"id": "a", "purpose": "", "metrics": ["order_count"], "start_date": "2025-01-01", "end_date": "2025-03-31"}]}
     state = await run("How many orders in Q1 2025?", [bad, good], drafts=("There were 13,076 orders.",))
     assert state["plan_attempts"] == 2
+
+
+# ---- Human approval: pause on an ambiguous term, resume with the chosen definition ----------
+
+INCOME_PLAN = {"question_type": "ranking", "steps": [
+    {"id": "s", "purpose": "", "metrics": ["revenue_pre_tax"], "group_by": ["store__store_name"]}]}
+INCOME_QUESTION = "Which store had the higher income?"
+
+
+@asynccontextmanager
+async def durable_graph(database, plans=(), drafts=()):
+    """A graph whose pauses are stored in a SQLite file, like the console and the command line."""
+    plan_outputs = [(Plan.model_validate(p), None, {}) for p in plans]
+    async with Client(server) as client, open_checkpointer(database) as checkpointer:
+        yield build_graph(McpGateway(client), scripted(*plan_outputs), scripted(*[(d, {}) for d in drafts]),
+                          checkpointer)
+
+
+async def test_an_ambiguous_question_pauses_survives_a_restart_and_resumes_with_the_choice(tmp_path):
+    database, config = tmp_path / "checkpoints.sqlite", thread_config("thread-1")
+    async with durable_graph(database, plans=[INCOME_PLAN]) as graph:
+        paused = await graph.ainvoke({"question": INCOME_QUESTION, "interactive": True}, config)
+        assert "answer" not in paused and "results" not in paused  # nothing was queried before the user answered
+
+    # Everything above is gone (connection, graph, MCP client), as after a process restart. The new
+    # planner has no scripted output: resuming must not call the model again.
+    with_tax = "Philadelphia had the higher income: 450,969.65, measured as Revenue (with tax)."
+    async with durable_graph(database, drafts=[with_tax]) as graph:
+        request = pending_approval(await graph.aget_state(config))
+        question = request["questions"][0]
+        assert question["term"] == "income"
+        assert [o["metric"] for o in question["options"]] == ["revenue_pre_tax", "revenue_with_tax"]
+        assert all(o["label"] and o["description"] for o in question["options"])
+        state = await graph.ainvoke(Command(resume={"income": "revenue_with_tax"}), config)
+
+    assert state["choices"] == {"income": "revenue_with_tax"} and state["ambiguities"] == []
+    assert state["plan"]["steps"][0]["metrics"] == ["revenue_with_tax"]
+    assert has(state["facts"], 450969.65) and not has(state["facts"], 425467)
+    assert state["answer"] == with_tax and state["write_attempts"] == 1 and state["plan_attempts"] == 1
+
+
+async def test_answering_all_reports_every_definition_as_before(tmp_path):
+    both = "Philadelphia: Revenue (pre-tax) 425,467; Revenue (with tax) 450,969.65."
+    async with durable_graph(tmp_path / "c.sqlite", plans=[INCOME_PLAN], drafts=[both]) as graph:
+        config = thread_config("thread-2")
+        await graph.ainvoke({"question": INCOME_QUESTION, "interactive": True}, config)
+        state = await graph.ainvoke(Command(resume="all"), config)
+    assert metrics(state["ambiguities"]) == [["revenue_pre_tax", "revenue_with_tax"]]
+    assert has(state["facts"], 425467, 450969.65) and state["answer"] == both
+
+
+async def test_only_interactive_runs_with_an_active_ambiguity_pause(tmp_path):
+    both = "Philadelphia: Revenue (pre-tax) 425,467; Revenue (with tax) 450,969.65."
+    orders = {"question_type": "lookup", "steps": [{"id": "s", "purpose": "", "metrics": ["order_count"]}]}
+    async with durable_graph(tmp_path / "c.sqlite", plans=[INCOME_PLAN, orders],
+                             drafts=[both, "There were 61,948 orders."]) as graph:
+        # The default (what the evals run): no pause, every definition reported.
+        state = await graph.ainvoke({"question": INCOME_QUESTION}, thread_config("a"))
+        assert state["answer"] == both and pending_approval(await graph.aget_state(thread_config("a"))) is None
+        # Interactive, but nothing to ask.
+        state = await graph.ainvoke({"question": "How many orders were placed?", "interactive": True},
+                                    thread_config("b"))
+        assert state["answer"] == "There were 61,948 orders."
+
+
+def metrics(items):
+    return [item["metrics"] for item in items]
+
+
+async def test_the_top_period_is_broken_down_even_when_the_plan_splits_it_wrongly():
+    """Reproduces the m06 spot-check failure of 2026-10-09: the planner asked for new customers by month
+    and, separately, by store over all dates; the answer then gave Brooklyn's all-time 493 as March's."""
+    plan = {"question_type": "ranking", "steps": [
+        {"id": "by_month", "purpose": "", "metrics": ["new_customers"], "group_by": ["metric_time__month"]},
+        {"id": "by_store", "purpose": "", "metrics": ["new_customers"], "group_by": ["store__store_name"]}]}
+    state = await run("Which month had the most new customers, how many were there, and which store did most "
+                      "of them come from?", [plan])
+    added = next(s for s in state["facts"]["steps"] if s["id"] == "by_month_by_store")
+    top = added["top_period"][0]
+    assert top["metric"] == "new_customers" and str(top["metric_time__month"]).startswith("2025-03")
+    assert top["total"] == 283
+    assert {r["store__store_name"]: r["new_customers"] for r in top["rows"]} == {"Brooklyn": 255, "Philadelphia": 28}
+    assert "top_period" in state["facts"]["computed_fields"]
+    by_store = next(s for s in state["facts"]["steps"] if s["id"] == "by_store")
+    assert by_store["period"] == "all dates in the data"  # so 493 cannot pass for one month's number

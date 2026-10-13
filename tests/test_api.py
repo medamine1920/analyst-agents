@@ -15,12 +15,23 @@ PLAN = Plan.model_validate({"question_type": "lookup", "steps": [
     {"id": "orders", "purpose": "Count all orders", "metrics": ["order_count"]}]})
 
 
+INCOME_PLAN = Plan.model_validate({"question_type": "ranking", "steps": [
+    {"id": "s", "purpose": "Income by store", "metrics": ["revenue_pre_tax"], "group_by": ["store__store_name"]}]})
+WITH_TAX = "Philadelphia had the higher income: 450,969.65, measured as Revenue (with tax)."
+
+
 async def plan_fn(messages):
-    return PLAN.model_copy(deep=True), None, {"input_tokens": 3000, "output_tokens": 200}
+    plan = INCOME_PLAN if "income" in messages[-1].content else PLAN
+    return plan.model_copy(deep=True), None, {"input_tokens": 3000, "output_tokens": 200}
 
 
 async def write_fn(messages):
-    return "There were 61,948 orders.", {"input_tokens": 1000, "output_tokens": 50}
+    answer = WITH_TAX if "income" in messages[-1].content else "There were 61,948 orders."
+    return answer, {"input_tokens": 1000, "output_tokens": 50}
+
+
+def events_of(response):
+    return [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
 
 @pytest.fixture
@@ -31,9 +42,12 @@ def client(tmp_path):
               "category": "multi_step", "passed": True, "failed_checks": [], "answer": "ok", "error": None,
               "latency_s": 1.0, "input_tokens": 10, "output_tokens": 5}
     (results / "v2_orchestrated_test.jsonl").write_text(json.dumps(record) + "\n")
-    app = create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn,
-                     results_dir=results, traces_dir=tmp_path / "traces")
-    with TestClient(app) as test_client:
+    def start():
+        return TestClient(create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn, results_dir=results,
+                                     traces_dir=tmp_path / "traces", checkpoint_db=tmp_path / "checkpoints.sqlite"))
+
+    with start() as test_client:
+        test_client.restart = start  # a second app on the same files, as after a server restart
         yield test_client
 
 
@@ -59,7 +73,7 @@ def test_unknown_files_are_rejected(client):
 
 def test_ask_streams_every_step_then_saves_a_replayable_trace(client):
     response = client.post("/api/ask", json={"question": "How many orders were placed?"})
-    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    events = events_of(response)
     nodes = [e["node"] for e in events if e["type"] == "step"]
     assert nodes == ["resolve", "plan", "execute", "analyze", "write", "review"]
     done = next(e for e in events if e["type"] == "done")
@@ -72,3 +86,51 @@ def test_ask_streams_every_step_then_saves_a_replayable_trace(client):
 
 def test_short_questions_are_rejected(client):
     assert client.post("/api/ask", json={"question": "?"}).status_code == 422
+
+
+def test_an_ambiguous_question_asks_for_approval_and_resumes_after_a_restart(client):
+    question = "Which store had the higher income?"
+    first = events_of(client.post("/api/ask", json={"question": question, "interactive": True}))
+    assert [e["node"] for e in first if e["type"] == "step"] == ["resolve", "plan"]
+    approval = first[-1]
+    assert approval["type"] == "approval" and approval["questions"][0]["term"] == "income"
+    assert client.get("/api/traces").json() == []  # an unfinished run is not a saved trace
+    thread_id = approval["thread_id"]
+    assert client.post("/api/resume", json={"thread_id": thread_id, "choice": "order_count"}).status_code == 422
+
+    with client.restart() as restarted:
+        rest = events_of(restarted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_with_tax"}))
+        assert [e["node"] for e in rest if e["type"] == "step"] == ["clarify", "execute", "analyze", "write", "review"]
+        assert rest[0]["data"]["choices"] == {"income": "revenue_with_tax"}
+        done = next(e for e in rest if e["type"] == "done")
+        assert done["answer"] == WITH_TAX and done["usage"]["llm_calls"] == 2
+        saved = next(e for e in rest if e["type"] == "saved")
+        replay = restarted.get(f"/api/traces/{saved['id']}").json()
+        assert replay["question"] == question
+        assert [e["type"] for e in replay["events"]].count("step") == 7  # both halves, in one trace
+        # Answered once: the same pause cannot be answered again.
+        again = restarted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_with_tax"})
+        assert again.status_code == 404
+
+
+def test_resume_rejects_unknown_runs(client):
+    assert client.post("/api/resume", json={"thread_id": "0" * 32, "choice": "all"}).status_code == 404
+    assert client.post("/api/resume", json={"thread_id": "../x", "choice": "all"}).status_code == 422
+
+
+def test_the_scripted_console_answers_its_examples_and_says_so_for_other_questions(tmp_path, monkeypatch):
+    from scripts import demo_console
+
+    app = create_app(mcp_target=server, plan_fn=demo_console.plan_fn, write_fn=demo_console.write_fn,
+                     traces_dir=tmp_path / "traces", checkpoint_db=tmp_path / "c.sqlite",
+                     trace_label=demo_console.LABEL)
+    with TestClient(app) as scripted:
+        first = events_of(scripted.post("/api/ask", json={"question": "Which store had the higher income?",
+                                                          "interactive": True}))
+        thread_id = first[-1]["thread_id"]
+        rest = events_of(scripted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_pre_tax"}))
+        review = next(e for e in rest if e.get("node") == "review")
+        assert review["data"]["issues"] == [] and "$425,467" in next(e for e in rest if e["type"] == "done")["answer"]
+        assert scripted.get("/api/traces").json()[0]["label"] == demo_console.LABEL
+        other = events_of(scripted.post("/api/ask", json={"question": "How many customers do we have?"}))
+        assert "only answers its example questions" in next(e for e in other if e["type"] == "done")["answer"]

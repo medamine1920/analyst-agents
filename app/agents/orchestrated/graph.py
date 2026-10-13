@@ -1,14 +1,22 @@
 """Orchestrated analyst: plan (model) -> execute (code) -> analyze (code) -> write (model) -> review (code).
 
     python -m app.agents.orchestrated.graph "Why did revenue jump in March 2025?"
+    python -m app.agents.orchestrated.graph --interactive "Which store had the higher income?"
+    python -m app.agents.orchestrated.graph --resume <thread id>
+
+With --interactive the agent pauses when a business term has several governed definitions and
+asks which one is meant. The pause is saved to disk, so the answer can be given later, even
+from another process. Without it (the default, and what the evals use) every definition is reported.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
 import sys
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
@@ -16,21 +24,26 @@ from typing import Any, TypedDict
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 from app.agents.orchestrated.analysis import build_facts
 from app.agents.orchestrated.gateway import McpGateway
 from app.agents.orchestrated.glossary import resolve_terms
 from app.agents.orchestrated.plan import (
+    ALL_DEFINITIONS,
     Plan,
-    apply_ambiguity,
     ensure_decomposition,
+    ensure_drilldown,
     normalize_dates,
+    read_choices,
+    settle_ambiguities,
     validate_plan,
 )
 from app.agents.orchestrated.review import review_answer
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+CHECKPOINT_DB = REPO_ROOT / "checkpoints" / "analyst.sqlite"
 MAX_PLAN_ATTEMPTS = 3
 MAX_WRITE_ATTEMPTS = 2
 MAX_FACT_ROWS = 60
@@ -94,6 +107,10 @@ class AnalystState(TypedDict, total=False):
     tool_calls: list[str]
     ambiguities: list[dict]
     error: str
+    # Human approval: ask which definition is meant instead of reporting them all.
+    interactive: bool
+    pending_ambiguities: list[dict]
+    choices: dict[str, str]
 
 
 def _catalog_text(catalog: dict) -> str:
@@ -103,9 +120,13 @@ def _catalog_text(catalog: dict) -> str:
     )
 
 
-def _ambiguity_notes(resolution: dict) -> str:
+def _ambiguity_notes(resolution: dict, choices: dict[str, str]) -> str:
     notes = []
     for item in resolution.get("ambiguities", []):
+        chosen = choices.get(item["term"])
+        if chosen in item["metrics"]:
+            notes.append(f"- '{item['term']}' means ['{chosen}'] here (the user chose this definition).")
+            continue
         notes.append(f"- '{item['term']}' is ambiguous: use ALL of {item['metrics']} wherever it is needed.")
     for item in resolution.get("resolved", []):
         notes.append(f"- '{item['term']}' means {item['metrics']} here.")
@@ -120,18 +141,39 @@ def _trim(facts: dict) -> dict:
     return facts
 
 
-def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn):
+def approval_request(pending: list[dict], catalog: dict) -> dict:
+    """What the user is asked: for each ambiguous term, its governed definitions in plain words."""
+    return {"questions": [
+        {"term": item["term"],
+         "options": [{"metric": m, "label": catalog[m]["label"], "description": catalog[m]["description"]}
+                     for m in item["metrics"]]}
+        for item in pending]}
+
+
+def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpointer=None):
+    """Build the analyst graph. Pausing for approval ({"interactive": True}) needs a checkpointer."""
+
     async def resolve(state: AnalystState) -> dict:
         context = await gateway.context()
         return {"resolution": resolve_terms(state["question"]), "usage": [], "tool_calls": [],
-                "plan_attempts": 0, "write_attempts": 0, "feedback": [],
-                "facts": {"data_range": context["data_range"]}}
+                "plan_attempts": 0, "write_attempts": 0, "feedback": [], "choices": {},
+                "pending_ambiguities": [], "facts": {"data_range": context["data_range"]}}
+
+    def complete(parsed: Plan, active: list[dict], choices: dict[str, str], data_range: dict) -> dict:
+        """Settle the ambiguous terms, then add what good analysis always needs."""
+        parsed, still_open = settle_ambiguities(parsed, active, choices)
+        parsed = normalize_dates(parsed, data_range["first_date"], data_range["last_date"])
+        parsed = ensure_decomposition(parsed, gateway.cached_dimensions)
+        parsed = ensure_drilldown(parsed, gateway.cached_dimensions)
+        return {"plan": parsed.model_dump(), "ambiguities": still_open, "pending_ambiguities": []}
 
     async def plan(state: AnalystState) -> dict:
         context = await gateway.context()
         catalog, data_range = context["catalog"], context["data_range"]
+        choices = state.get("choices", {})
         system = PLANNER_PROMPT.format(first=data_range["first_date"], last=data_range["last_date"],
-                                       notes=_ambiguity_notes(state["resolution"]), catalog=_catalog_text(catalog))
+                                       notes=_ambiguity_notes(state["resolution"], choices),
+                                       catalog=_catalog_text(catalog))
         feedback, usage, attempts = list(state.get("feedback", [])), list(state["usage"]), state["plan_attempts"]
         while attempts < MAX_PLAN_ATTEMPTS:
             attempts += 1
@@ -151,12 +193,27 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn):
             # Enforce an ambiguity only if the plan measures that concept (e.g. "no sales" in a
             # question about stores without orders is not a request for revenue).
             active = [a for a in state["resolution"]["ambiguities"] if used & set(a["metrics"])]
-            parsed = apply_ambiguity(parsed, active)
-            parsed = normalize_dates(parsed, data_range["first_date"], data_range["last_date"])
-            parsed = ensure_decomposition(parsed, gateway.cached_dimensions)
-            return {"plan": parsed.model_dump(), "plan_attempts": attempts, "usage": usage, "feedback": [],
-                    "ambiguities": active}
+            progress = {"plan_attempts": attempts, "usage": usage, "feedback": []}
+            # Ask the user only once per term: a replan after a failed query reuses the earlier choice.
+            pending = [a for a in active if a["term"] not in choices] if state.get("interactive") else []
+            if pending:
+                return {**progress, "plan": parsed.model_dump(), "ambiguities": active,
+                        "pending_ambiguities": pending}
+            return {**progress, **complete(parsed, active, choices, data_range)}
         return {"plan_attempts": attempts, "usage": usage, "error": "No valid plan: " + "; ".join(feedback)}
+
+    async def clarify(state: AnalystState) -> dict:
+        """Pause until the user says which definition they mean, then finish the plan in code.
+
+        On resume this node runs again from its first line, so it must stay free of model calls
+        and side effects: the plan it needs was already saved by the plan node.
+        """
+        context = await gateway.context()
+        pending = state["pending_ambiguities"]
+        answer = interrupt(approval_request(pending, context["catalog"]))
+        choices = {**state.get("choices", {}), **read_choices(answer, pending)}
+        update = complete(Plan.model_validate(state["plan"]), state["ambiguities"], choices, context["data_range"])
+        return {**update, "choices": choices}
 
     async def execute(state: AnalystState) -> dict:
         plan_obj = Plan.model_validate(state["plan"])
@@ -177,6 +234,10 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn):
 
     async def write(state: AnalystState) -> dict:
         notes = ""
+        for term, chosen in state.get("choices", {}).items():
+            if chosen != ALL_DEFINITIONS:
+                notes += (f"The user was asked what '{term}' means and chose {chosen}: "
+                          "say that the answer uses this definition.\n")
         for item in state.get("ambiguities", []):
             notes += (f"The term '{item['term']}' has several governed definitions ({', '.join(item['metrics'])}): "
                       "report the result for each and say which definition each number uses.\n")
@@ -200,7 +261,9 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn):
         return {"answer": f"I could not build a valid analysis plan for this question. ({state.get('error', '')})"}
 
     def after_plan(state: AnalystState) -> str:
-        return "give_up" if state.get("error") else "execute"
+        if state.get("error"):
+            return "give_up"
+        return "clarify" if state.get("pending_ambiguities") else "execute"
 
     def after_execute(state: AnalystState) -> str:
         if state["feedback"]:
@@ -220,20 +283,22 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn):
         return END if state.get("answer") else "write"
 
     graph = StateGraph(AnalystState)
-    for name, node in [("resolve", resolve), ("plan", plan), ("execute", execute), ("analyze", analyze),
+    for name, node in [("resolve", resolve), ("plan", plan), ("clarify", clarify), ("execute", execute),
+                       ("analyze", analyze),
                        ("analyze_partial", analyze_partial), ("write", write), ("review", review),
                        ("give_up", give_up)]:
         graph.add_node(name, node)
     graph.add_edge(START, "resolve")
     graph.add_edge("resolve", "plan")
-    graph.add_conditional_edges("plan", after_plan, ["execute", "give_up"])
+    graph.add_conditional_edges("plan", after_plan, ["clarify", "execute", "give_up"])
+    graph.add_edge("clarify", "execute")
     graph.add_conditional_edges("execute", after_execute, ["plan", "analyze", "analyze_partial"])
     graph.add_edge("analyze", "write")
     graph.add_edge("analyze_partial", "write")
     graph.add_edge("write", "review")
     graph.add_conditional_edges("review", after_review, ["write", END])
     graph.add_edge("give_up", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 # ---- Model-backed planner and writer (Groq) ---------------------------------------------
@@ -286,16 +351,78 @@ def make_write_fn(model) -> WriteFn:
     return write_fn
 
 
-async def main(question: str) -> None:
+def thread_config(thread_id: str) -> dict:
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def pending_approval(snapshot) -> dict | None:
+    """The question a paused run is waiting on, or None if the run is not paused."""
+    for task in getattr(snapshot, "tasks", ()):
+        for item in task.interrupts:
+            return item.value
+    return None
+
+
+def open_checkpointer(path: Path | None = None):
+    """Durable storage for paused runs (a SQLite file; set CHECKPOINT_DB to move it)."""
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    path = Path(path or os.environ.get("CHECKPOINT_DB") or CHECKPOINT_DB)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return AsyncSqliteSaver.from_conn_string(str(path))
+
+
+def ask_on_terminal(request: dict) -> dict[str, str]:
+    answers = {}
+    for item in request["questions"]:
+        print(f"\n'{item['term']}' has several definitions. Which one do you mean?")
+        for number, option in enumerate(item["options"], start=1):
+            print(f"  {number}. {option['label']} ({option['metric']}): {option['description']}")
+        print(f"  {len(item['options']) + 1}. Report all of them")
+        picked = input("Your choice (number): ").strip()
+        index = int(picked) - 1 if picked.isdigit() else -1
+        in_range = 0 <= index < len(item["options"])
+        answers[item["term"]] = item["options"][index]["metric"] if in_range else ALL_DEFINITIONS
+    return answers
+
+
+def model_fns() -> tuple[PlanFn, WriteFn]:
+    """The Groq-backed planner and writer for interactive use (command line, console).
+
+    With LLM_CACHE=1 their answers are reused from disk; see cache.py. Evals build theirs directly
+    with make_plan_fn / make_write_fn and are never cached.
+    """
+    from app.agents.orchestrated.cache import cache_dir, cached_plan_fn, cached_write_fn
+
+    model = groq_model()
+    plan_fn, write_fn = make_plan_fn(model), make_write_fn(model)
+    directory = cache_dir()
+    if directory:
+        plan_fn = cached_plan_fn(plan_fn, model.model_name, directory)
+        write_fn = cached_write_fn(write_fn, model.model_name, directory)
+    return plan_fn, write_fn
+
+
+async def main(question: str | None, interactive: bool = False, resume: str | None = None) -> None:
     from mcp import Client
 
     from app.agents.mcp_tools import default_target
 
     load_dotenv(REPO_ROOT / ".env")
-    model = groq_model()
-    async with Client(default_target()) as client:
-        graph = build_graph(McpGateway(client), make_plan_fn(model), make_write_fn(model))
-        state = await graph.ainvoke({"question": question})
+    async with Client(default_target()) as client, open_checkpointer() as checkpointer:
+        graph = build_graph(McpGateway(client), *model_fns(), checkpointer)
+        config = thread_config(resume or uuid.uuid4().hex)
+        if resume:
+            state = (await graph.aget_state(config)).values
+            if pending_approval(await graph.aget_state(config)) is None:
+                print(f"No paused run with thread id {resume}.")
+                return
+        else:
+            state = await graph.ainvoke({"question": question, "interactive": interactive}, config)
+        while (request := pending_approval(await graph.aget_state(config))) is not None:
+            print("Paused. To answer later:  python -m app.agents.orchestrated.graph "
+                  f"--resume {config['configurable']['thread_id']}")
+            state = await graph.ainvoke(Command(resume=ask_on_terminal(request)), config)
     for step in state.get("plan", {}).get("steps", []):
         print(f"-> {step['id']}: {step['metrics']} by {step['group_by'] or '-'} "
               f"{step['start_date'] or ''}..{step['end_date'] or ''}  ({step['purpose']})")
@@ -303,6 +430,12 @@ async def main(question: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit('usage: python -m app.agents.orchestrated.graph "<question>"')
-    asyncio.run(main(sys.argv[1]))
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("question", nargs="?")
+    parser.add_argument("--interactive", action="store_true", help="ask which definition an ambiguous term means")
+    parser.add_argument("--resume", metavar="THREAD_ID", help="answer a paused run")
+    args = parser.parse_args()
+    if not args.question and not args.resume:
+        parser.error("give a question, or --resume <thread id>")
+    sys.stdout.reconfigure(errors="replace")  # answers may hold characters a Windows console cannot print
+    asyncio.run(main(args.question, args.interactive, args.resume))

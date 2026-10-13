@@ -7,16 +7,25 @@ export async function getJSON(path) {
 }
 
 /** POST a question and call onEvent for every streamed step (server-sent events). */
-export async function streamAsk(question, onEvent, signal) {
-  const response = await fetch("/api/ask", {
+export function streamAsk(question, interactive, onEvent, signal) {
+  return streamPost("/api/ask", { question, interactive }, onEvent, signal);
+}
+
+/** Continue a run that paused to ask which definition was meant. */
+export function streamResume(threadId, choice, onEvent, signal) {
+  return streamPost("/api/resume", { thread_id: threadId, choice }, onEvent, signal);
+}
+
+async function streamPost(path, body, onEvent, signal) {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify(body),
     signal,
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`The API refused the question (${response.status}): ${detail.slice(0, 200)}`);
+    throw new Error(`The API refused the request (${response.status}): ${detail.slice(0, 200)}`);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

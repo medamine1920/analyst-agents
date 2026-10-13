@@ -5,9 +5,9 @@ import { KindTag } from "./bits";
 import StepDetails from "./StepDetails";
 
 function Step({ index, event, animate, last }) {
-  const [open, setOpen] = useState(event.node === "plan" || event.node === "analyze");
+  const [open, setOpen] = useState(["plan", "clarify", "analyze"].includes(event.node));
   const info = STEPS[event.node] ?? { title: event.node, kind: "code" };
-  const dot = info.kind === "model" ? "bg-model" : "bg-code";
+  const dot = { model: "bg-model", person: "bg-ink" }[info.kind] ?? "bg-code";
   return (
     <li className={`relative pl-9 ${animate ? "step-in" : ""}`}>
       {!last && <span aria-hidden className="absolute top-7 bottom-0 left-[11px] w-px bg-rule" />}

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,8 @@ ORDER_REVENUE = {"revenue_pre_tax", "revenue_with_tax"}
 # Metrics whose time axis is not an event date: store_count is dated by each store's opening.
 # Filtering them by an order period silently removes everything, so they are counted over all time.
 TIMELESS_METRICS = {"store_count"}
+# What a user may answer when asked which definition of an ambiguous term they mean.
+ALL_DEFINITIONS = "all"
 
 
 class Filter(BaseModel):
@@ -145,6 +148,53 @@ def apply_ambiguity(plan: Plan, ambiguities: list[dict]) -> Plan:
     return plan
 
 
+def apply_choice(plan: Plan, ambiguity: dict, chosen: str) -> Plan:
+    """The user picked one definition of an ambiguous term: every other definition becomes that one."""
+    others = [m for m in ambiguity["metrics"] if m != chosen]
+    if not others:
+        return plan
+    for step in plan.steps:
+        if any(m in others for m in step.metrics):
+            step.metrics = list(dict.fromkeys(chosen if m in others else m for m in step.metrics))
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in others) + r")\b")
+    kept, seen = [], set()
+    for calc in plan.calculations:
+        calc.expression = pattern.sub(chosen, calc.expression)
+        if (calc.step_id, calc.expression) not in seen:  # one formula per definition collapses into one
+            seen.add((calc.step_id, calc.expression))
+            kept.append(calc)
+    plan.calculations = kept
+    return plan
+
+
+def read_choices(answer: object, pending: list[dict]) -> dict[str, str]:
+    """Turn the user's answer into {term: metric or "all"}.
+
+    A single string answers every pending term; a dict answers term by term. Anything that is
+    not one of a term's definitions falls back to "all", which is what the agent does unasked.
+    """
+    choices = {}
+    for ambiguity in pending:
+        value = answer.get(ambiguity["term"]) if isinstance(answer, dict) else answer
+        choices[ambiguity["term"]] = value if value in ambiguity["metrics"] else ALL_DEFINITIONS
+    return choices
+
+
+def settle_ambiguities(plan: Plan, active: list[dict], choices: dict[str, str]) -> tuple[Plan, list[dict]]:
+    """Apply each chosen definition; terms without a choice keep every definition.
+
+    Returns the plan and the ambiguities that are still open (the answer must report them all).
+    """
+    still_open = []
+    for ambiguity in active:
+        chosen = choices.get(ambiguity["term"], ALL_DEFINITIONS)
+        if chosen in ambiguity["metrics"]:
+            plan = apply_choice(plan, ambiguity, chosen)
+        else:
+            still_open.append(ambiguity)
+    return apply_ambiguity(plan, still_open), still_open
+
+
 def ensure_decomposition(plan: Plan, dimensions_for) -> Plan:
     """Explaining a change always means asking: which store, and more orders or bigger orders?"""
     by_id = {step.id: step for step in plan.steps}
@@ -163,6 +213,37 @@ def ensure_decomposition(plan: Plan, dimensions_for) -> Plan:
                 plan.steps.append(copy)
                 pair.append(copy.id)
             plan.comparisons.append(Comparison(before_step=pair[0], after_step=pair[1]))
+    return plan
+
+
+def ensure_drilldown(plan: Plan, dimensions_for) -> Plan:
+    """"Which month was highest, and which store did most of it come from?" needs month x store.
+
+    Planners sometimes ask for the metric by period and, separately, by category over the whole
+    period. The second query cannot answer the second half of the question: it describes every
+    period together, not the top one. When both exist, add the cross breakdown so the analysis can
+    break down the top period.
+    """
+    existing = {(tuple(s.metrics), tuple(s.group_by)) for s in plan.steps}
+    for by_time in list(plan.steps):
+        if len(by_time.group_by) != 1 or not is_time_dimension(by_time.group_by[0]):
+            continue
+        for by_category in list(plan.steps):
+            shared = [m for m in by_time.metrics if m in by_category.metrics]
+            same_scope = (by_time.filters == by_category.filters and by_time.start_date == by_category.start_date
+                          and by_time.end_date == by_category.end_date)
+            if (not shared or not same_scope or len(by_category.group_by) != 1
+                    or is_time_dimension(by_category.group_by[0])):
+                continue
+            group_by = [by_time.group_by[0], by_category.group_by[0]]
+            if (tuple(shared), tuple(group_by)) in existing or not set(group_by) <= expand_time_names(
+                    dimensions_for(shared)):
+                continue
+            cross = by_time.model_copy(deep=True)
+            cross.id, cross.metrics, cross.group_by = f"{by_time.id}_{by_category.id}", shared, group_by
+            cross.purpose = f"{', '.join(shared)} for each {group_by[0]} and {group_by[1]} (added to break down the top period)"
+            plan.steps.append(cross)
+            existing.add((tuple(shared), tuple(group_by)))
     return plan
 
 

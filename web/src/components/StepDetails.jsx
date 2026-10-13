@@ -13,7 +13,7 @@ function Resolve({ data }) {
       {ambiguities.map((item) => (
         <li key={item.term}>
           <strong>“{item.term}”</strong> has several definitions:{" "}
-          {item.metrics.map((m) => <Ident key={m}>{m}</Ident>).reduce((a, b) => [a, " and ", b])}. All of them will be reported.
+          {item.metrics.map((m) => <Ident key={m}>{m}</Ident>).reduce((a, b) => [a, " and ", b])}. Unless one is chosen, all of them are reported.
         </li>
       ))}
       {resolved.map((item) => (
@@ -36,6 +36,11 @@ function PlanView({ data }) {
   if (!plan) return null;
   return (
     <div className="space-y-3">
+      {data.waiting_for?.length > 0 && (
+        <p className="text-sm text-muted">
+          The queries wait here until the meaning of {data.waiting_for.map((t) => `“${t}”`).join(" and ")} is chosen.
+        </p>
+      )}
       {data.attempts > 1 && (
         <p className="text-sm text-muted">Valid on attempt {data.attempts}: earlier plans were sent back with their errors.</p>
       )}
@@ -62,6 +67,23 @@ function PlanView({ data }) {
           Formula <Ident>{c.name}</Ident> = <Ident>{c.expression}</Ident>
         </p>
       ))}
+    </div>
+  );
+}
+
+function Clarify({ data }) {
+  return (
+    <div className="space-y-3">
+      <ul className="space-y-1.5">
+        {Object.entries(data.choices ?? {}).map(([term, chosen]) => (
+          <li key={term}>
+            <strong>“{term}”</strong>:{" "}
+            {chosen === "all" ? "report every definition." : <>use <Ident>{chosen}</Ident>.</>}
+          </li>
+        ))}
+      </ul>
+      <p className="text-sm text-muted">The plan was updated in code; the model was not called again.</p>
+      <PlanView data={{ plan: data.plan }} />
     </div>
   );
 }
@@ -150,7 +172,7 @@ function Review({ data }) {
   );
 }
 
-const VIEWS = { resolve: Resolve, plan: PlanView, execute: Execute, analyze: Analyze, analyze_partial: Analyze, write: Write, review: Review };
+const VIEWS = { resolve: Resolve, plan: PlanView, clarify: Clarify, execute: Execute, analyze: Analyze, analyze_partial: Analyze, write: Write, review: Review };
 
 export default function StepDetails({ node, data }) {
   const View = VIEWS[node];

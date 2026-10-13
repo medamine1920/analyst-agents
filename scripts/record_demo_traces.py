@@ -4,10 +4,14 @@ The data steps are real (real graph, real MCP server, real warehouse); only the 
 writer are scripted. Each trace is labeled as a demo so it is never mistaken for a live run.
 
     python -m scripts.record_demo_traces      (from the repo root)
+    python -m scripts.record_demo_traces 5    (only the fifth demo)
 """
 
 import asyncio
+import sys
+import uuid
 
+from langgraph.checkpoint.memory import InMemorySaver
 from mcp import Client
 
 from app.agents.orchestrated.gateway import McpGateway
@@ -67,13 +71,23 @@ DEMOS = [
                   "Brooklyn, **$0.98 higher** per order.\n\n*Metric:* average_order_value, pre-tax revenue "
                   "divided by the number of orders.",
     },
+    {   # Human approval: the run pauses on "sales" and continues with the definition the user picks.
+        "question": "Which store had the higher sales?",
+        "choice": "revenue_with_tax",
+        "plan": {"question_type": "ranking", "steps": [
+            {"id": "by_store", "purpose": "Revenue by store", "metrics": ["revenue_pre_tax"],
+             "group_by": ["store__store_name"]}]},
+        "answer": "**Philadelphia** had the higher sales: **$450,969.65** versus $220,455.72 at Brooklyn.\n\n"
+                  "\"Sales\" has two governed definitions; you chose revenue including tax, so these numbers "
+                  "use revenue_with_tax: the sum of order totals including the sales tax customers paid.",
+    },
 ]
 
 
-async def main() -> None:
+async def main(only: list[int]) -> None:
     async with Client(server) as client:
         gateway = McpGateway(client)
-        for demo in DEMOS:
+        for demo in [d for number, d in enumerate(DEMOS, start=1) if not only or number in only]:
             plan = Plan.model_validate(demo["plan"])
 
             async def plan_fn(messages, plan=plan):
@@ -82,8 +96,13 @@ async def main() -> None:
             async def write_fn(messages, answer=demo["answer"]):
                 return answer, {}
 
-            graph = build_graph(gateway, plan_fn, write_fn)
-            events = [event async for event in stream_trace(graph, demo["question"])]
+            graph = build_graph(gateway, plan_fn, write_fn, InMemorySaver())
+            run = {"thread_id": uuid.uuid4().hex}
+            events = [event async for event in stream_trace(graph, demo["question"], interactive="choice" in demo,
+                                                            **run)]
+            if events[-1]["type"] == "approval":  # answer the question the run paused on, then continue
+                events += [event async for event in stream_trace(
+                    graph, demo["question"], resume=demo["choice"], elapsed_before=events[-1]["elapsed_s"], **run)]
             review = [e for e in events if e.get("node") == "review"]
             issues = review[-1]["data"]["issues"] if review else ["no review step"]
             trace_id = save_trace(demo["question"], events, label=LABEL, prefix="demo-")
@@ -91,4 +110,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main([int(number) for number in sys.argv[1:]]))

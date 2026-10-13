@@ -3,7 +3,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import Trace from "../components/Trace";
-import { getJSON, streamAsk } from "../lib/api";
+import { Ident } from "../components/bits";
+import { getJSON, streamAsk, streamResume } from "../lib/api";
 import { formatNumber } from "../lib/format";
 
 const EXAMPLES = [
@@ -34,7 +35,46 @@ function ReviewBadge({ steps }) {
   );
 }
 
-export function AnswerPanel({ question, steps, done, label, running }) {
+/** The agent paused: the user says which governed definition a business term means. */
+function ApprovalCard({ approval, onChoose }) {
+  const [picks, setPicks] = useState({});
+  function pick(term, value) {
+    const next = { ...picks, [term]: value };
+    setPicks(next);
+    if (approval.questions.every((q) => next[q.term])) onChoose(next);
+  }
+  return (
+    <div className="space-y-4 rounded-xl border border-rule bg-surface p-4">
+      {approval.questions.map((item) => (
+        <fieldset key={item.term} className="space-y-2">
+          <legend className="font-medium">
+            “{item.term}” has several definitions. Which one do you mean?
+          </legend>
+          {[...item.options, { metric: "all", label: "Report all of them", description: "" }].map((option) => (
+            <button
+              key={option.metric}
+              type="button"
+              aria-pressed={picks[item.term] === option.metric}
+              onClick={() => pick(item.term, option.metric)}
+              className={`block w-full rounded-lg border px-3 py-2 text-left hover:border-ink ${
+                picks[item.term] === option.metric ? "border-ink" : "border-rule"
+              }`}
+            >
+              <span className="font-medium">{option.label}</span>{" "}
+              {option.metric !== "all" && <Ident>{option.metric}</Ident>}
+              {option.description && <span className="mt-0.5 block text-sm text-muted">{option.description}</span>}
+            </button>
+          ))}
+        </fieldset>
+      ))}
+      <p className="text-sm text-muted">
+        The run is saved while it waits, so nothing is lost if the server restarts.
+      </p>
+    </div>
+  );
+}
+
+export function AnswerPanel({ question, steps, done, label, running, approval, onChoose }) {
   const answer = finalAnswer(steps, done);
   return (
     <section aria-label="Answer" className="space-y-4">
@@ -47,6 +87,7 @@ export function AnswerPanel({ question, steps, done, label, running }) {
       ) : (
         running && <p className="text-muted">Working on it. Each step appears on the right as it finishes.</p>
       )}
+      {approval && !running && <ApprovalCard approval={approval} onChoose={onChoose} />}
       <ReviewBadge steps={steps} />
       {done && (
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
@@ -74,6 +115,8 @@ export default function Ask() {
   const [traces, setTraces] = useState([]);
   const [shown, setShown] = useState({ question: "", steps: [], done: null, label: "" });
   const [running, setRunning] = useState(false);
+  const [interactive, setInteractive] = useState(true);
+  const [approval, setApproval] = useState(null);
   const [animate, setAnimate] = useState(false);
   const [error, setError] = useState("");
   const timers = useRef([]);
@@ -90,6 +133,7 @@ export default function Ask() {
     timers.current = [];
     controller.current?.abort();
     setError("");
+    setApproval(null);
     setShown({ question: nextQuestion, steps: [], done: null, label });
   }
 
@@ -121,30 +165,39 @@ export default function Ask() {
     }
   }
 
-  async function askLive(event) {
-    event.preventDefault();
-    const text = question.trim();
-    if (text.length < 3) return;
-    reset(text);
+  /** Run one stretch of a live question: from the start, or from a pause to the end. */
+  async function follow(start) {
     setAnimate(true);
     setRunning(true);
     controller.current = new AbortController();
+    const onEvent = (ev) => {
+      if (ev.type === "step") setShown((s) => ({ ...s, steps: [...s.steps, ev] }));
+      if (ev.type === "approval") setApproval(ev);
+      if (ev.type === "done") setShown((s) => ({ ...s, done: ev }));
+      if (ev.type === "saved") loadTraces();
+      if (ev.type === "error") setError(`The run stopped: ${ev.message}`);
+    };
     try {
-      await streamAsk(
-        text,
-        (ev) => {
-          if (ev.type === "step") setShown((s) => ({ ...s, steps: [...s.steps, ev] }));
-          if (ev.type === "done") setShown((s) => ({ ...s, done: ev }));
-          if (ev.type === "saved") loadTraces();
-          if (ev.type === "error") setError(`The run stopped: ${ev.message}`);
-        },
-        controller.current.signal,
-      );
+      await start(onEvent, controller.current.signal);
     } catch (e) {
       if (e.name !== "AbortError") setError(e.message);
     } finally {
       setRunning(false);
     }
+  }
+
+  function askLive(event) {
+    event.preventDefault();
+    const text = question.trim();
+    if (text.length < 3) return;
+    reset(text);
+    return follow((onEvent, signal) => streamAsk(text, interactive, onEvent, signal));
+  }
+
+  function choose(choice) {
+    const threadId = approval.thread_id;
+    setApproval(null);
+    return follow((onEvent, signal) => streamResume(threadId, choice, onEvent, signal));
   }
 
   return (
@@ -190,6 +243,10 @@ export default function Ask() {
                 {running ? "Answering…" : "Ask"}
               </button>
             </div>
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} />
+              Ask me when a business term has several definitions (otherwise all of them are reported).
+            </label>
             <div className="flex flex-wrap gap-2">
               {EXAMPLES.map((example) => (
                 <button
@@ -231,11 +288,12 @@ export default function Ask() {
 
       {shown.question ? (
         <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-          <AnswerPanel {...shown} running={running} />
+          <AnswerPanel {...shown} running={running} approval={approval} onChoose={choose} />
           <section aria-label="How this answer was built" className="rounded-xl border border-rule bg-surface/70 p-5">
             <h3 className="mb-4 font-display text-lg font-semibold">How this answer was built</h3>
             <Trace steps={shown.steps} animate={animate} />
             {running && <p className="pl-9 text-sm text-muted">Next step running…</p>}
+            {approval && !running && <p className="pl-9 text-sm text-muted">Paused: waiting for your choice.</p>}
           </section>
         </div>
       ) : (

@@ -24,6 +24,11 @@ services:
       MCP_TRANSPORT: stdio
     volumes:
       - console-checkpoints:/srv/checkpoints
+    networks:
+      # "web" is the server's reverse-proxy network: Caddy reaches this service there by its
+      # container name (analyst-agents-console:8000). Without it the public address returns an error.
+      - default
+      - web
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=8)"]
       interval: 30s
@@ -36,3 +41,7 @@ services:
 
 volumes:
   console-checkpoints:
+
+networks:
+  web:
+    external: true

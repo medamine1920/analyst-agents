@@ -21,11 +21,12 @@ const VIEWS = {
   settings: { title: "Settings", component: Settings },
 };
 // Old addresses keep working: they now live under Settings.
-const MOVED = { connectors: "keys", account: "security", admin: "people", evals: "developer" };
+const MOVED = { account: "security", admin: "people", evals: "developer" };
 
 function currentRoute() {
   const { view, params } = parseHash();
   if (MOVED[view]) return { view: "settings", params: { tab: MOVED[view] } };
+  if (view === "connectors") return { view: "connections", params: {} }; // access keys for other apps live there now
   return { view: VIEWS[view] ? view : "ask", params };
 }
 

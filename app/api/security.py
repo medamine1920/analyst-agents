@@ -150,6 +150,8 @@ class SecurityStore:
         for table, column, definition in (
             ("questions", "source", "text not null default 'sample'"),
             ("questions", "project", "text"),
+            # Questions run on a user's own model key are logged with that model and kept out of the budget.
+            ("questions", "model", "text"), ("questions", "own_key", "integer not null default 0"),
             ("sessions", "created_at", "real"), ("sessions", "last_seen", "real"),
             ("sessions", "ip", "text"), ("sessions", "user_agent", "text"),
             ("users", "totp_secret", "text"), ("users", "totp_pending", "text"), ("users", "recovery", "text"),
@@ -446,7 +448,8 @@ class SecurityStore:
 
     def tokens_today(self) -> int:
         with self._db() as db:
-            return db.execute("select coalesce(sum(tokens), 0) from questions where day = ?", (today(),)).fetchone()[0]
+            return db.execute("select coalesce(sum(tokens), 0) from questions where day = ? and own_key = 0",
+                              (today(),)).fetchone()[0]
 
     def check_budget(self, limits: Limits) -> None:
         if self.tokens_today() >= limits.daily_tokens:
@@ -454,19 +457,25 @@ class SecurityStore:
                                "Live questions start again at midnight UTC; saved runs still replay.")
 
     def start_question(self, user: str, question: str, limits: Limits, thread_id: str, source: str = "sample",
-                       project: str | None = None) -> int:
-        """Check the limits, then log the question. Raises LimitReached before anything is spent."""
+                       project: str | None = None, model: str | None = None, own_key: bool = False) -> int:
+        """Check the limits, then log the question. Raises LimitReached before anything is spent.
+
+        A question on the user's own key is not counted in the shared budget (their provider bills it),
+        but the hourly limit still applies: it protects the console, not the quota.
+        """
         now = time.time()
-        self.check_budget(limits)
+        if not own_key:
+            self.check_budget(limits)
         with self._db() as db:
             asked = db.execute("select count(*) from questions where user_name = ? and asked_at > ?",
                                (user, now - 3600)).fetchone()[0]
             if asked >= limits.questions_per_hour:
                 raise LimitReached(f"You have asked {asked} questions in the last hour, the limit is "
                                    f"{limits.questions_per_hour}. Try again a little later.")
-            return db.execute("insert into questions (user_name, question, asked_at, day, thread_id, source, project) "
-                              "values (?, ?, ?, ?, ?, ?, ?)",
-                              (user, question, now, today(), thread_id, source, project)).lastrowid
+            return db.execute("insert into questions (user_name, question, asked_at, day, thread_id, source, project, "
+                              "model, own_key) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              (user, question, now, today(), thread_id, source, project, model,
+                               int(own_key))).lastrowid
 
     def log_reused(self, user: str, question: str, trace_id: str | None, source: str = "sample",
                    project: str | None = None) -> None:
@@ -526,6 +535,6 @@ class SecurityStore:
             values.append(project)
         where = ("where " + " and ".join(clauses) + " ") if clauses else ""
         with self._db() as db:
-            rows = db.execute("select user_name, question, asked_at, status, tokens, trace_id, source, project "
+            rows = db.execute("select user_name, question, asked_at, status, tokens, trace_id, source, project, model "
                               f"from questions {where}order by asked_at desc limit ?", (*values, limit))
             return [dict(row) for row in rows]

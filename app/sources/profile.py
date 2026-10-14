@@ -42,9 +42,16 @@ class Table:
     columns: list[Column] = field(default_factory=list)
 
 
+FILE_EXTENSIONS = {"csv", "tsv", "txt", "xlsx", "xls", "json", "sqlite", "sqlite3", "db", "duckdb", "parquet"}
+
+
 def identifier(text: str, used: set[str] | None = None) -> str:
     """A safe lowercase name: 'Sales 2025.csv' -> 'sales_2025'. Unique within `used`."""
-    name = re.sub(r"[^a-z0-9]+", "_", text.lower().rsplit(".", 1)[0] if "." in text else text.lower()).strip("_")
+    lowered = text.lower()
+    stem, dot, extension = lowered.rpartition(".")
+    if dot and extension in FILE_EXTENSIONS:  # only a real file extension: "Rfam.family" keeps both words
+        lowered = stem
+    name = re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
     name = name or "table"
     if name[0].isdigit():
         name = f"t_{name}"

@@ -226,3 +226,28 @@ export feature, which reads saved runs. Each run now records who asked it; it is
 person, to someone who was shown it as a saved answer, and (for runs saved before owners existed)
 to admins only. The rule was tested from the other user's side, not just the owner's.
 *Shows: re-checking old assumptions when a new feature changes what data means, and testing access control from the outsider's side.*
+
+## Interview story 45: the test that found what the unit tests could not
+
+Before calling the database feature done, I connected a real public database (Rfam's MySQL) through
+the console exactly as a user would. It failed three ways that 117 passing tests had missed. The
+MySQL driver accepts no quoting, so any password with a space broke the connection string; the
+password now travels in the driver's own environment variable and never sits in the string at all.
+A `schema.table` name was cut at the dot as if it were a file extension. And the answer to "the five
+largest" left out the fourth: every number was real and passed review, but the rows arrived in
+alphabetical order and the writer did the ranking itself. That broke the project's own rule that code
+computes and the model only writes, so breakdowns now carry a rank and arrive largest first. Each fault
+was reproduced as a failing test first; the same live question then came back right.
+*Shows: testing against the real thing before calling it done, and tracing a wrong answer back to a broken design rule rather than a prompt.*
+
+## Interview story 46: bring your own model without forking the agent
+
+Users asked to run their questions on their own Claude, GPT or Gemini key. The agent already took its
+planner and writer as two functions, so a key only has to produce those two functions: everything after
+(execution, the computed facts, the number check) is unchanged and no less safe on another model. The
+differences live in one small table: how each provider is asked for structured output (current Claude
+models refuse a forced tool call, so they get the provider's JSON schema first), which models a key can
+list, and how the key is sent. A key is checked by the provider before it is stored, encrypted, and
+never shown again; questions on it skip the shared free-tier budget but keep the hourly limit, which
+protects the server rather than the quota.
+*Shows: designing seams early so a large feature becomes a small one, and separating whose cost a limit protects.*

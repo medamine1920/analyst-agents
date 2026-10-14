@@ -1,8 +1,8 @@
 import { linkTo } from "../lib/route";
 import { formatNumber } from "../lib/format";
 import Admin from "./Admin";
-import ApiKeys from "./Connectors";
 import Evals from "./Evals";
+import ModelKeys from "./settings/ModelKeys";
 import Security from "./settings/Security";
 
 function Profile({ session }) {
@@ -48,7 +48,7 @@ function Usage({ session }) {
       </p>
       <p className="text-muted">
         The budget is shared by everyone on this console and starts again at midnight UTC. Saved answers to repeated
-        questions cost nothing.
+        questions cost nothing, and questions run on your own model key (under API keys) do not count.
       </p>
     </div>
   );
@@ -57,13 +57,13 @@ function Usage({ session }) {
 const TABS = [
   { id: "profile", label: "Profile", component: Profile },
   { id: "security", label: "Security", component: Security },
-  { id: "keys", label: "API keys", component: ApiKeys },
+  { id: "keys", label: "API keys", component: ModelKeys, hint: "Your own keys for Claude, GPT, Gemini or Groq. Your questions run on the model you choose." },
   { id: "usage", label: "Usage", component: Usage },
   { id: "people", label: "People", component: Admin, admin: true },
   { id: "developer", label: "Developer", component: Evals, admin: true, hint: "How often the agent is right, measured on fixed question sets." },
 ];
 
-/** Settings in one place: who you are, how you sign in, keys for other apps, usage, and admin pages. */
+/** Settings in one place: who you are, how you sign in, your model keys, usage, and admin pages. */
 export default function Settings({ params = {}, session, onSessionChanged }) {
   const tabs = TABS.filter((t) => !t.admin || session?.role === "admin");
   const tab = tabs.find((t) => t.id === params.tab) ?? tabs[0];

@@ -31,9 +31,11 @@ from mcp import Client
 from pydantic import BaseModel, Field
 from starlette.routing import Route
 
+from app.agents import providers
 from app.agents.mcp_tools import default_target
 from app.agents.orchestrated.gateway import McpGateway
 from app.agents.orchestrated.graph import (
+    DEFAULT_MODEL,
     open_checkpointer,
     pending_approval,
     thread_config,
@@ -42,6 +44,7 @@ from app.agents.orchestrated.plan import ALL_DEFINITIONS
 from app.api.answers import AnswerStore, data_version, suggest
 from app.api.connector_routes import add_connector_routes
 from app.api.connectors import REQUEST_USER, build_mcp_app, result_from_events
+from app.api.model_keys import ModelKeyStore
 from app.api.projects import ProjectStore
 from app.api.security import (
     SESSION_COOKIE,
@@ -53,6 +56,7 @@ from app.api.security import (
 )
 from app.api.sources_routes import add_source_routes
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
+from app.connectors.http import ConnectorError
 from app.connectors.store import ConnectionStore
 from app.sources.runtime import SourceRuntime
 from app.sources.store import SAMPLE, SourceStore
@@ -119,6 +123,18 @@ class KeyRequest(BaseModel):
     days: int | None = Field(default=90, ge=1, le=730, description="Days until the key stops working; null for never")
 
 
+class ModelKeyRequest(BaseModel):
+    provider: str = Field(pattern="^(anthropic|openai|google|groq)$")
+    key: str = Field(min_length=10, max_length=400, description="The provider's API key; stored encrypted")
+    model: str | None = Field(default=None, max_length=120, description="Which model to use; the provider's default if empty")
+
+
+class ModelChoice(BaseModel):
+    provider: str | None = Field(default=None, pattern="^(anthropic|openai|google|groq)$",
+                                 description="null: use the console's own model")
+    model: str | None = Field(default=None, max_length=120)
+
+
 class PasswordChange(BaseModel):
     current: str = Field(min_length=1, max_length=200)
     new: str = Field(min_length=10, max_length=200)
@@ -151,12 +167,15 @@ def sse(event: dict) -> str:
 def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir: Path = RESULTS_DIR,
                traces_dir: Path = TRACES_DIR, checkpoint_db: Path | None = None, trace_label: str = "",
                auth: bool | None = None, security_db: Path | None = None, limits: Limits | None = None,
-               live_traces_dir: Path | None = None, sources_dir: Path | None = None) -> FastAPI:
+               live_traces_dir: Path | None = None, sources_dir: Path | None = None,
+               model_factory=None) -> FastAPI:
     """Build the API. Tests pass an in-process MCP server and scripted planner/writer.
 
     auth=None reads CONSOLE_AUTH: sign-in is required unless it is "off".
     Live runs are saved in live_traces_dir (LIVE_TRACES_DIR; on the server a folder in the volume, so
     they survive deploys); traces_dir holds the demo runs that ship with the code. Both are listed.
+    model_factory(provider, model, key) builds the planner and writer for a user's own model key
+    (tests pass a scripted one).
     """
     load_dotenv(REPO_ROOT / ".env")
     state: dict[str, Any] = {}
@@ -166,6 +185,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     sources = SourceStore(store.path, sources_dir)
     projects = ProjectStore(store.path)
     connections = ConnectionStore(store.path)
+    model_keys = ModelKeyStore(store.path)
+    model_factory = model_factory or providers.model_fns
     runtime = SourceRuntime(sources)
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
     live_dir = Path(live_traces_dir or os.environ.get("LIVE_TRACES_DIR") or traces_dir)
@@ -267,7 +288,61 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return {"user": user, "auth": auth, "usage": store.usage(user, limits) if user else None,
                 "role": account["role"] if account else ("admin" if user == "local" else None),
                 "must_change_password": bool(account and account["must_change"]),
-                "two_factor": bool(account and store.two_factor_on(user))}
+                "two_factor": bool(account and store.two_factor_on(user)), "model": current_model(user)}
+
+    def current_model(user: str | None) -> dict | None:
+        if not user:
+            return None
+        active = next((k for k in model_keys.list(user) if k["active"]), None)
+        if active:
+            return {"provider": active["provider"], "label": active["label"], "model": active["model"], "own": True}
+        return {"provider": "server", "label": "The console's model", "own": False,
+                "model": os.environ.get("GROQ_MODEL", DEFAULT_MODEL)}
+
+    # ---- the user's own model keys -------------------------------------------------------------
+
+    @app.get("/api/models")
+    async def list_model_keys(request: Request) -> dict:
+        """The providers one can add a key for, the user's keys (masked) and which model answers."""
+        browser_only(request)
+        return {"providers": [{"id": p.id, "label": p.label, "default": p.default, "help": p.help}
+                              for p in providers.PROVIDERS.values()],
+                "keys": model_keys.list(request.state.user), "current": current_model(request.state.user)}
+
+    @app.post("/api/models/keys")
+    async def add_model_key(body: ModelKeyRequest, request: Request) -> dict:
+        """Check the key with the provider (by listing its models), then store it encrypted and use it."""
+        browser_only(request)
+        key = body.key.strip()
+        try:
+            models = await providers.check_key(body.provider, key)
+        except ConnectorError as exc:
+            raise HTTPException(422, f"The key was not accepted: {exc}") from exc
+        default = providers.PROVIDERS[body.provider].default
+        model = (body.model or "").strip() or (default if default in models or not models else models[0])
+        if models and model not in models:
+            raise HTTPException(422, f"This key cannot use {model}. It can use: {', '.join(models[:12])}")
+        store.record(request.state.user, f"added a {body.provider} model key", *client_of(request))
+        return model_keys.save(request.state.user, body.provider, key, model, models)
+
+    @app.put("/api/models/active")
+    async def choose_model(body: ModelChoice, request: Request) -> dict:
+        browser_only(request)
+        try:
+            model_keys.choose(request.state.user, body.provider, body.model)
+        except KeyError as exc:
+            raise HTTPException(404, "Add a key for that provider first.") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"current": current_model(request.state.user)}
+
+    @app.delete("/api/models/keys/{provider}")
+    async def remove_model_key(provider: str, request: Request) -> dict:
+        browser_only(request)
+        if not model_keys.remove(request.state.user, provider):
+            raise HTTPException(404, "No key of yours for that provider.")
+        store.record(request.state.user, f"removed the {provider} model key", *client_of(request))
+        return {"removed": provider, "current": current_model(request.state.user)}
 
     # ---- security: sessions, activity, two-step sign-in --------------------------------------
 
@@ -450,7 +525,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         projects.remove(request.state.user, project_id)
         return {"removed": project_id}
 
-    def model():
+    def server_model():
         if "model" not in state:
             from app.agents.orchestrated import graph as orchestrated
 
@@ -458,27 +533,40 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             state["model"] = (plan_fn, write_fn) if plan_fn and write_fn else orchestrated.model_fns()
         return state["model"]
 
-    def graph():
-        """The sample shop's graph."""
-        if "graph" not in state:
-            from app.agents.orchestrated import graph as orchestrated
+    def model_for(user: str) -> dict:
+        """The model this user's questions run on: their active key's, or the console's own.
 
-            state["graph"] = orchestrated.build_graph(state["gateway"], *model(), state["checkpointer"])
-        return state["graph"]
+        {"id": ..., "fns": (plan_fn, write_fn), "own": bool, "label": ...}. A user's planner and writer
+        are rebuilt only when they change key or model.
+        """
+        choice = model_keys.active(user) if user else None
+        if not choice:
+            return {"id": "server", "fns": server_model(), "own": False, "label": None}
+        model_id = f"{user}:{choice['provider']}:{choice['model']}:{choice['version']}"
+        cached = state.setdefault("user_models", {}).get(user)
+        if not cached or cached[0] != model_id:
+            cached = state["user_models"][user] = (
+                model_id, model_factory(choice["provider"], choice["model"], choice["key"]))
+        return {"id": model_id, "fns": cached[1], "own": True, "label": f"{choice['provider']}:{choice['model']}"}
 
-    async def graph_for(user: str, source: str):
-        """A graph per source, rebuilt whenever the source's query process is (after a rebuild, say)."""
-        if source == SAMPLE:
-            return graph()
+    async def graph_for(user: str, source: str, model: dict | None = None):
+        """A graph per source and model, rebuilt whenever the source's query process is (after a rebuild, say)."""
         from app.agents.orchestrated import graph as orchestrated
 
+        model = model or model_for(user)
+        if source == SAMPLE:
+            graphs = state.setdefault("graphs", {})
+            if model["id"] not in graphs:
+                graphs[model["id"]] = orchestrated.build_graph(state["gateway"], *model["fns"], state["checkpointer"])
+            return graphs[model["id"]]
         gateway = await gateway_for(user, source)
-        cached = state.setdefault("source_graphs", {}).get(source)
+        key = (source, model["id"])
+        cached = state.setdefault("source_graphs", {}).get(key)
         if not cached or cached[0] is not gateway:
             name = sources.get(user, source)["name"]
-            built = orchestrated.build_graph(gateway, *model(), state["checkpointer"], use_glossary=False,
+            built = orchestrated.build_graph(gateway, *model["fns"], state["checkpointer"], use_glossary=False,
                                              prompts=orchestrated.source_prompts(f"the data source '{name}'"))
-            state["source_graphs"][source] = cached = (gateway, built)
+            state["source_graphs"][key] = cached = (gateway, built)
         return cached[1]
 
     def spent(event: dict) -> int:
@@ -540,14 +628,16 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
         Not a generator itself, so the checks happen when it is called, not when it is read.
         """
-        source_graph = await graph_for(user, source)
+        model = model_for(user)
+        source_graph = await graph_for(user, source, model)
         if not fresh:
             saved = answers.find(question, interactive, await current_data_version(user, source), source)
             if saved:
                 store.log_reused(user, question, saved["trace_id"], source, project)
                 return saved_events(saved)
         thread_id = uuid.uuid4().hex
-        question_id = store.start_question(user, question, limits, thread_id, source, project)
+        question_id = store.start_question(user, question, limits, thread_id, source, project,
+                                           model["label"], model["own"])
         stream = stream_trace(source_graph, question, thread_id=thread_id, interactive=interactive)
         return run_events(question, thread_id, stream, [], question_id, interactive, user, source)
 
@@ -698,11 +788,14 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @app.post("/api/resume")
     async def resume(request: ResumeRequest, http: Request) -> StreamingResponse:
+        model = model_for(http.state.user)
         try:
-            store.check_budget(limits)  # the rest of a paused run still spends tokens
+            if not model["own"]:
+                store.check_budget(limits)  # the rest of a paused run still spends tokens
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
-        snapshot = await graph().aget_state(thread_config(request.thread_id))
+        graph = await graph_for(http.state.user, SAMPLE, model)
+        snapshot = await graph.aget_state(thread_config(request.thread_id))
         waiting = pending_approval(snapshot)
         if waiting is None:
             raise HTTPException(404, "No paused question with that id. It may already have been answered.")
@@ -714,7 +807,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         paused_file = paused_dir / f"{request.thread_id}.json"
         saved = json.loads(paused_file.read_text(encoding="utf-8")) if paused_file.exists() else {}
         earlier = saved.get("events", [])
-        stream = stream_trace(graph(), "", thread_id=request.thread_id, resume=request.choice,
+        stream = stream_trace(graph, "", thread_id=request.thread_id, resume=request.choice,
                               elapsed_before=earlier[-1]["elapsed_s"] if earlier else 0.0)
         return streamed(run_events(snapshot.values["question"], request.thread_id, stream, earlier,
                                    store.question_for_thread(request.thread_id), user=http.state.user))

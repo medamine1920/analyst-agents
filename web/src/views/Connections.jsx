@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../lib/api";
 import { linkTo } from "../lib/route";
+import AccessKeys from "./Connectors";
 
 function when(seconds) {
   return seconds ? new Date(seconds * 1000).toLocaleDateString(undefined, { dateStyle: "medium" }) : "never";
@@ -302,6 +303,14 @@ export default function Connections({ params = {} }) {
             </li>
           ))}
         </ul>
+      </section>
+      <section className="space-y-3" aria-label="Access for other apps">
+        <h2 className="font-semibold">Access for other apps</h2>
+        <p className="text-sm text-muted">
+          Let a script, a spreadsheet or an MCP client (Claude Desktop, Cursor) ask the analyst for you, with a key made
+          here. To use your own Claude, GPT or Gemini key, go to <a href={linkTo("settings", { tab: "keys" })} className="underline">Settings → API keys</a>.
+        </p>
+        <AccessKeys />
       </section>
     </div>
   );

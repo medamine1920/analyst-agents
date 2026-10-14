@@ -49,9 +49,11 @@ def test_generated_metrics_say_how_they_are_computed_and_tables_without_dates_ge
     assert '"Order Date" as order_date' in model_sql(renamed, "2026-10-14")
 
 
-def test_connections_are_quoted_and_private_addresses_refused(monkeypatch):
-    text = connection_string("postgres", "db.example.com", 5432, "shop", "reader", "it's a secret")
-    assert "password='it\\'s a secret'" in text and "dbname='shop'" in text
+def test_connection_strings_carry_no_password_and_private_addresses_are_refused(monkeypatch):
+    text = connection_string("postgres", "db.example.com", 5432, "shop", "reader")
+    assert text.startswith("host=db.example.com port=5432 dbname=shop user=reader") and "password" not in text
+    with pytest.raises(ValueError, match="cannot contain spaces"):
+        connection_string("mysql", "db.example.com", 3306, "my shop", "reader")
     monkeypatch.delenv("ALLOW_PRIVATE_SOURCES", raising=False)
     for host in ("127.0.0.1", "localhost", "10.0.0.5", "192.168.1.20"):
         with pytest.raises(ValueError, match="private network"):
@@ -66,7 +68,10 @@ def test_passwords_are_encrypted_at_rest(tmp_path, monkeypatch):
     source = store.add_connection("ana", "Shop", "postgres", "127.0.0.1", None, "shop", "reader", "s3cret-pass")
     assert b"s3cret-pass" not in (tmp_path / "console.sqlite").read_bytes()
     assert not any(b"s3cret-pass" in p.read_bytes() for p in (tmp_path / "sources").rglob("*") if p.is_file())
-    assert "s3cret-pass" in store.environment(source["id"])["SOURCE_ATTACH"]
+    environment = store.environment(source["id"])
+    assert environment["PGPASSWORD"] == "s3cret-pass" and "s3cret-pass" not in environment["SOURCE_ATTACH"]
+    mysql = store.add_connection("ana", "Shop", "mysql", "127.0.0.1", None, "shop", "reader", "it's a 'secret'")
+    assert store.environment(mysql["id"])["MYSQL_PWD"] == "it's a 'secret'"  # any password works, spaces and quotes too
     with pytest.raises(KeyError):
         store.get("bob", source["id"])  # private to its owner
 
@@ -176,6 +181,8 @@ def test_names_metricflow_keeps_for_itself_are_renamed():
     """Reproduces a CSV with a 'day' column failing to build: MetricFlow refuses time-grain names."""
     assert identifier("day") == "day_data" and identifier("Year") == "year_data"
     assert identifier("month.csv") == "month_data" and identifier("daily") == "daily"
+    # A schema.table label from a live database keeps both parts (it once became just "rfam").
+    assert identifier("Rfam.family") == "rfam_family" and identifier("shop.db") == "shop"
 
 
 @pytest.mark.integration

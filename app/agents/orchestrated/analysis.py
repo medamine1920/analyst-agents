@@ -98,6 +98,31 @@ def add_gaps(step: QueryStep, rows: list[dict]) -> None:
                 row[f"{metric}_gap_to_top"] = round(tops[key] - value, 4)
 
 
+def rank_and_sort(step: QueryStep, rows: list[dict]) -> None:
+    """For a breakdown by one category: each group's rank per metric (1 = largest, ties share a rank),
+    and the rows ordered largest first within each period.
+
+    Answers "the five largest", "the top store" without the writer ranking anything, and keeps the
+    largest groups when a long breakdown is cut down for the writer.
+    """
+    categories = [g for g in step.group_by if not is_time_dimension(g)]
+    times = [g for g in step.group_by if is_time_dimension(g)]
+    if len(categories) != 1 or len(rows) < 2 or not step.metrics:
+        return
+    for metric in step.metrics:
+        by_period: dict[tuple, list[float]] = {}
+        for row in rows:
+            if row.get(metric) is not None:
+                by_period.setdefault(tuple(row.get(t) for t in times), []).append(row[metric])
+        for row in rows:
+            value, values = row.get(metric), by_period.get(tuple(row.get(t) for t in times), [])
+            if value is not None:
+                row[f"{metric}_rank"] = 1 + sum(1 for v in values if v > value)
+    first = step.metrics[0]
+    rows.sort(key=lambda r: (tuple(str(r.get(t)) for t in times),
+                             r.get(first) is None, -(r.get(first) or 0)))
+
+
 def top_periods(step: QueryStep, rows: list[dict], totals: list[dict]) -> list[dict]:
     """For a period x category breakdown: the period with the highest total, and its rows.
 
@@ -195,6 +220,8 @@ FIELD_GUIDE = {
     "share_of_total_change_pct": "this group's share (%) of the total change across all groups",
     "before = 0": "the group had no activity in the earlier period (not proof that it opened then)",
     "<metric>_gap_to_top": "how far this group is below the top group for that metric, in the same period",
+    "<metric>_rank": "this group's position for that metric in the same period (1 = largest); rows are listed "
+                     "largest first, so 'the top five' are the rows ranked 1 to 5",
     "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
     "top_period": "the period with the highest total of a metric, with that period's rows: use these rows "
                   "(not a breakdown covering other dates) to say what the top period was made of",
@@ -216,6 +243,7 @@ def build_facts(plan: Plan, results: dict[str, dict], catalog: dict[str, dict], 
     totals_by_step = {step.id: add_shares(step, rows_by_step[step.id], additive) for step in plan.steps}
     for step in plan.steps:
         add_gaps(step, rows_by_step[step.id])
+        rank_and_sort(step, rows_by_step[step.id])
     tops = {step.id: top_periods(step, rows_by_step[step.id], totals_by_step[step.id]) for step in plan.steps}
     empty_groups = [found for step in plan.steps for found in groups_without_values(step, rows_by_step[step.id])]
     missing_groups = groups_missing_between(plan.steps, rows_by_step)

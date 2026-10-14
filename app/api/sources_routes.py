@@ -27,6 +27,7 @@ class ConnectionRequest(BaseModel):
     user: str = Field(min_length=1, max_length=255)
     password: str = Field(default="", max_length=1000)
     schema_name: str | None = Field(default=None, max_length=255, description="Only this schema's tables")
+    tables: str | None = Field(default=None, max_length=2000, description="Only these tables, separated by commas")
 
 
 async def read_limited(upload: UploadFile) -> bytes:
@@ -81,7 +82,8 @@ def add_source_routes(app: FastAPI, sources: SourceStore, runtime: SourceRuntime
         """A live Postgres or MySQL database, attached read-only; the password is stored encrypted."""
         try:
             return started(sources.add_connection(request.state.user, body.name, body.kind, body.host, body.port,
-                                                   body.database, body.user, body.password, body.schema_name))
+                                                   body.database, body.user, body.password, body.schema_name,
+                                                   (body.tables or "").split(",")))
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

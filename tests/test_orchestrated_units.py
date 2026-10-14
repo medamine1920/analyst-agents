@@ -194,3 +194,20 @@ def test_a_missing_or_empty_key_is_explained(monkeypatch, tmp_path):
         graph.groq_model()
     (tmp_path / ".env").write_text("GROQ_API_KEY=test-key-not-real")
     assert graph.groq_model().groq_api_key.get_secret_value() == "test-key-not-real"  # empty variable replaced
+
+
+def test_breakdowns_are_ranked_in_code_largest_first():
+    """Reproduces a live answer that listed the 'five largest' types wrongly: the rows came alphabetically
+    and the writer had to rank them itself, so the fourth largest was left out."""
+    from app.agents.orchestrated.analysis import build_facts
+
+    counts = {"Cis-reg;": 351, "Gene; lncRNA;": 218, "Gene; miRNA;": 1598, "Gene; sRNA;": 765, "Gene; snoRNA;": 484, "Intron;": 10}
+    plan = Plan.model_validate({"question_type": "ranking", "steps": [
+        {"id": "s", "purpose": "", "metrics": ["rfam_count"], "group_by": ["rfam__type"]}]})
+    results = {"s": {"columns": ["rfam__type", "rfam_count"], "rows": [[k, v] for k, v in sorted(counts.items())]}}
+    catalog = {"rfam_count": {"type": "simple", "description": "Rows", "label": "Rows"}}
+    facts = build_facts(plan, results, catalog, {"data_range": {}})
+    rows = facts["steps"][0]["rows"]
+    assert [r["rfam__type"] for r in rows][:5] == ["Gene; miRNA;", "Gene; sRNA;", "Gene; snoRNA;", "Cis-reg;", "Gene; lncRNA;"]
+    assert [r["rfam_count_rank"] for r in rows] == [1, 2, 3, 4, 5, 6]
+    assert "<metric>_rank" in facts["computed_fields"]

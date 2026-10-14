@@ -64,17 +64,25 @@ def check_host(host: str) -> None:
             raise ValueError(f"'{host}' is inside a private network, which this console does not connect to.")
 
 
-def quote_value(value: str) -> str:
-    """A value in a 'key=value key=value' connection string, quoted so spaces and quotes are safe."""
-    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+PLAIN_VALUE = re.compile(r"^[^\s'\"=\\]+$")
+# The database drivers read the password from these, so it never has to be written into a connection string.
+PASSWORD_VARIABLES = {"postgres": "PGPASSWORD", "mysql": "MYSQL_PWD"}
 
 
-def connection_string(kind: str, host: str, port: int, database: str, user: str, password: str) -> str:
+def connection_string(kind: str, host: str, port: int, database: str, user: str) -> str:
+    """'host=... port=... dbname=... user=...' without the password (passed separately, see environment()).
+
+    DuckDB's MySQL reader accepts no quoting at all, so values with spaces or quotes are refused rather
+    than half-escaped.
+    """
     keys = {"postgres": "dbname", "mysql": "database"}
-    parts = {"host": host, "port": port, keys[kind]: database, "user": user, "password": password}
+    parts = {"host": host, "port": port, keys[kind]: database, "user": user}
+    for key, value in parts.items():
+        if not PLAIN_VALUE.match(str(value)):
+            raise ValueError(f"The {key} cannot contain spaces, quotes, '=' or backslashes.")
     if kind == "postgres":
         parts.update({"sslmode": "prefer", "connect_timeout": 10})
-    return " ".join(f"{key}={quote_value(value)}" for key, value in parts.items())
+    return " ".join(f"{key}={value}" for key, value in parts.items())
 
 
 class SourceStore:
@@ -164,14 +172,16 @@ class SourceStore:
         return source
 
     def add_connection(self, owner: str, name: str, kind: str, host: str, port: int | None, database: str,
-                       user: str, password: str, schema: str | None = None) -> dict:
+                       user: str, password: str, schema: str | None = None, tables: list[str] | None = None) -> dict:
         if kind not in LIVE_KINDS:
             raise ValueError(f"Choose one of: {', '.join(LIVE_KINDS)}.")
         if not (host and database and user):
             raise ValueError("Fill in the address, the database name and the user.")
         check_host(host)
-        secret = connection_string(kind, host, port or LIVE_KINDS[kind], database, user, password)
-        attach = {"type": kind, "secret": True, "schema": (schema or "").strip() or None}
+        dsn = connection_string(kind, host.strip(), port or LIVE_KINDS[kind], database.strip(), user.strip())
+        secret = json.dumps({"dsn": dsn, "password": password})
+        wanted = [t.strip() for t in tables or [] if t.strip()]
+        attach = {"type": kind, "secret": True, "schema": (schema or "").strip() or None, "tables": wanted or None}
         return self._new(owner, name, kind, {"attach": attach, "host": host, "database": database}, secret)
 
     # ---- reading ----------------------------------------------------------------------------
@@ -201,9 +211,16 @@ class SourceStore:
         folder = self.folder / source_id
         env = {"DBT_PROJECT_DIR": str(folder), "DUCKDB_PATH": str(folder / "source.duckdb")}
         with self._db() as db:
-            row = db.execute("select secret, details from sources where id = ?", (source_id,)).fetchone()
+            row = db.execute("select kind, secret, details from sources where id = ?", (source_id,)).fetchone()
         if row and row["secret"]:
-            env["SOURCE_ATTACH"] = self._fernet.decrypt(row["secret"].encode()).decode()
+            secret = self._fernet.decrypt(row["secret"].encode()).decode()
+            try:
+                parts = json.loads(secret)
+            except json.JSONDecodeError:  # stored before passwords were kept apart: the whole string
+                parts = {"dsn": secret, "password": ""}
+            env["SOURCE_ATTACH"] = parts["dsn"]
+            if parts.get("password") and row["kind"] in PASSWORD_VARIABLES:
+                env[PASSWORD_VARIABLES[row["kind"]]] = parts["password"]
         details = json.loads(row["details"]) if row and row["details"] else {}
         if details.get("time_dimensions"):  # the date column of each table, for the source's date range
             env["DATA_TIME_DIMENSIONS"] = ",".join(details["time_dimensions"])

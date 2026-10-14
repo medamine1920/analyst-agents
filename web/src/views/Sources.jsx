@@ -160,7 +160,7 @@ function FilesForm({ kind, onAdded }) {
 }
 
 function ConnectionForm({ onAdded }) {
-  const [form, setForm] = useState({ name: "", kind: "postgres", host: "", port: "", database: "", user: "", password: "", schema_name: "" });
+  const [form, setForm] = useState({ name: "", kind: "postgres", host: "", port: "", database: "", user: "", password: "", schema_name: "", tables: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }));
@@ -169,7 +169,7 @@ function ConnectionForm({ onAdded }) {
     setBusy(true);
     setError("");
     try {
-      await postJSON("/api/sources/connection", { ...form, port: form.port ? Number(form.port) : null, schema_name: form.schema_name || null, name: form.name || form.database });
+      await postJSON("/api/sources/connection", { ...form, port: form.port ? Number(form.port) : null, schema_name: form.schema_name || null, tables: form.tables || null, name: form.name || form.database });
       setForm((f) => ({ ...f, password: "" }));
       onAdded();
     } catch (e) {
@@ -202,6 +202,7 @@ function ConnectionForm({ onAdded }) {
         {row("Schema (optional)", "schema_name", { placeholder: form.kind === "postgres" ? "public" : "" })}
         {row("User", "user", { required: true, autoComplete: "off" })}
         {row("Password", "password", { type: "password", autoComplete: "new-password" })}
+        {row("Tables (optional)", "tables", { placeholder: "orders, customers — all tables if empty" })}
       </div>
       {error && <p role="alert" className="rounded-md bg-fail-tint px-3 py-2 text-sm text-fail">{error}</p>}
       <button type="submit" disabled={busy || !form.host || !form.database || !form.user} className="rounded-lg bg-ink px-4 py-2 font-medium text-white disabled:opacity-50">

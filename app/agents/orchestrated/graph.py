@@ -342,31 +342,36 @@ def groq_model():
     return ChatGroq(model=os.environ.get("GROQ_MODEL", DEFAULT_MODEL), temperature=0, max_retries=5)
 
 
-def make_plan_fn(model) -> PlanFn:
-    """Ask for the plan as JSON content (never as a tool call).
+SWITCH_HINTS = ("response_format", "schema", "output_config", "output_format", "tool_choice", "not supported",
+                "json_mode", "structured")
 
-    First choice is json_schema (the provider enforces the shape). If the provider rejects the
-    schema itself, switch once to json_mode with the schema written into the prompt.
+
+def make_plan_fn(model, modes: tuple[str, ...] = ("json_schema", "json_mode")) -> PlanFn:
+    """Ask for the plan in the first way the provider accepts.
+
+    Groq, OpenAI and Gemini: json_schema (the provider enforces the shape), then json_mode with the schema
+    written into the prompt. Claude: json_schema, then a tool call (older models). If the provider rejects
+    the way of asking itself, switch once to the next and ask again.
     """
-    modes = {
-        "json_schema": model.with_structured_output(Plan, method="json_schema", include_raw=True),
-        "json_mode": model.with_structured_output(Plan, method="json_mode", include_raw=True),
-    }
-    state = {"mode": "json_schema"}
+    runners: dict[str, Any] = {}  # built when first needed: a fallback is often never used
+    state = {"index": 0}
     schema_note = SystemMessage("Respond with only a JSON object matching this JSON schema:\n"
                                 + json.dumps(Plan.model_json_schema()))
 
     async def plan_fn(messages: list) -> tuple[Plan | None, str | None, dict]:
-        request = messages if state["mode"] == "json_schema" else [*messages, schema_note]
+        mode = modes[state["index"]]
+        request = [*messages, schema_note] if mode == "json_mode" else messages
         try:
-            output: dict[str, Any] = await modes[state["mode"]].ainvoke(request)
+            if mode not in runners:
+                runners[mode] = model.with_structured_output(Plan, method=mode, include_raw=True)
+            output: dict[str, Any] = await runners[mode].ainvoke(request)
         except Exception as exc:
             text = str(exc)
             if "429" in text or "rate limit" in text.lower():
                 raise
-            if state["mode"] == "json_schema" and ("response_format" in text or "schema" in text.lower()):
-                state["mode"] = "json_mode"
-                return None, "Switching to JSON mode; please produce the plan again.", {}
+            if state["index"] + 1 < len(modes) and any(hint in text.lower() for hint in SWITCH_HINTS):
+                state["index"] += 1
+                return None, f"Switching to {modes[state['index']]}; please produce the plan again.", {}
             return None, f"The plan was rejected: {text[:400]}", {}
         usage = getattr(output.get("raw"), "usage_metadata", None) or {}
         if output.get("parsing_error") is not None:
@@ -379,7 +384,7 @@ def make_plan_fn(model) -> PlanFn:
 def make_write_fn(model) -> WriteFn:
     async def write_fn(messages: list) -> tuple[str, dict]:
         response = await model.ainvoke(messages)
-        return str(response.content), response.usage_metadata or {}
+        return response.text, response.usage_metadata or {}  # text only: Claude may add thinking blocks
 
     return write_fn
 

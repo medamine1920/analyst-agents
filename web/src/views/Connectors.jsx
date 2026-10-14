@@ -65,7 +65,7 @@ function examples(origin, key) {
   ];
 }
 
-/** API keys for other applications, and how to use them. */
+/** Access keys for other applications (they ask the analyst as you), and how to use them. */
 export default function Connectors() {
   const [keys, setKeys] = useState(null);
   const [name, setName] = useState("");
@@ -100,8 +100,8 @@ export default function Connectors() {
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
       <section className="space-y-4">
         <p className="text-sm text-muted">
-          Keys let other applications (scripts, spreadsheets, MCP clients) ask the analyst as you: they share
-          today's token budget, count towards your hourly limit, and their questions appear in your history. A key is
+          Keys let other applications (scripts, spreadsheets, MCP clients) ask the analyst as you: they use the
+          model you chose under Settings → API keys (and so the same budget), count towards your hourly limit, and their questions appear in your history. A key is
           shown once, stored only as a fingerprint, and cannot create or revoke keys. Give each application its own
           key, so you can revoke one without touching the others.
         </p>

@@ -73,14 +73,19 @@ def open_workspace(folder: Path, spec: dict) -> tuple[duckdb.DuckDBPyConnection,
     path = os.environ["SOURCE_ATTACH"] if attach.get("secret") else attach["path"]
     con.execute(f"attach '{path.replace(chr(39), chr(39) * 2)}' as live (type {attach['type']}, read_only)")
     wanted_schema = attach.get("schema")
+    wanted_tables = {t.lower() for t in attach.get("tables") or []}  # only these, when the user named some
     rows = con.execute("select table_schema, table_name from information_schema.tables "
                        "where table_catalog = 'live' order by table_schema, table_name").fetchall()
     for schema, table in rows:
         if wanted_schema and schema != wanted_schema:
             continue
-        if schema in ("information_schema", "pg_catalog"):
+        if schema in ("information_schema", "pg_catalog", "mysql", "performance_schema", "sys"):
+            continue
+        if wanted_tables and table.lower() not in wanted_tables and f"{schema}.{table}".lower() not in wanted_tables:
             continue
         tables.append((f"live.{quoted(schema)}.{quoted(table)}", table if schema in ("main", "public") else f"{schema}.{table}"))
+    if wanted_tables and not tables:
+        raise ValueError("None of the tables you named were found: " + ", ".join(sorted(wanted_tables)))
     return con, tables[:MAX_TABLES]
 
 

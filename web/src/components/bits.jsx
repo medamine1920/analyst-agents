@@ -23,7 +23,7 @@ export function DataTable({ rows, limit = 12 }) {
   const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
   const shown = rows.slice(0, limit);
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>

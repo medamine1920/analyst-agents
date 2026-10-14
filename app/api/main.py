@@ -75,10 +75,13 @@ def sse(event: dict) -> str:
 
 def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir: Path = RESULTS_DIR,
                traces_dir: Path = TRACES_DIR, checkpoint_db: Path | None = None, trace_label: str = "",
-               auth: bool | None = None, security_db: Path | None = None, limits: Limits | None = None) -> FastAPI:
+               auth: bool | None = None, security_db: Path | None = None, limits: Limits | None = None,
+               live_traces_dir: Path | None = None) -> FastAPI:
     """Build the API. Tests pass an in-process MCP server and scripted planner/writer.
 
     auth=None reads CONSOLE_AUTH: sign-in is required unless it is "off".
+    Live runs are saved in live_traces_dir (LIVE_TRACES_DIR; on the server a folder in the volume, so
+    they survive deploys); traces_dir holds the demo runs that ship with the code. Both are listed.
     """
     load_dotenv(REPO_ROOT / ".env")
     state: dict[str, Any] = {}
@@ -86,7 +89,9 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     store, limits = SecurityStore(security_db), limits or Limits.from_env()
     answers = AnswerStore(store.path)  # same database file: it is the volume that survives deploys
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
-    paused_dir = traces_dir / "paused"  # the steps already shown for runs waiting on the user
+    live_dir = Path(live_traces_dir or os.environ.get("LIVE_TRACES_DIR") or traces_dir)
+    trace_dirs = list(dict.fromkeys([live_dir, traces_dir]))  # live runs first; the same folder only once
+    paused_dir = live_dir / "paused"  # the steps already shown for runs waiting on the user
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -182,7 +187,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                     if question_id:
                         store.finish_question(question_id, "waiting", spent(last))
                 elif last["type"] == "done":
-                    trace_id = save_trace(question, collected, traces_dir, label=trace_label)
+                    trace_id = save_trace(question, collected, live_dir, label=trace_label)
                     paused_file.unlink(missing_ok=True)
                     await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
                     if question_id:
@@ -233,17 +238,18 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     @app.get("/api/traces")
     async def traces() -> list[dict]:
         found = []
-        for path in sorted(traces_dir.glob("*.json"), reverse=True):
+        for path in sorted((p for d in trace_dirs for p in d.glob("*.json")), key=lambda p: p.name, reverse=True):
             data = json.loads(path.read_text(encoding="utf-8"))
             found.append({k: data.get(k) for k in ("id", "question", "label", "created")})
         return found
 
     @app.get("/api/traces/{trace_id}")
     async def trace(trace_id: str) -> dict:
-        path = traces_dir / f"{trace_id}.json"
-        if path.parent != traces_dir or not path.exists():
-            raise HTTPException(404, "No saved run with that id.")
-        return json.loads(path.read_text(encoding="utf-8"))
+        for folder in trace_dirs:
+            path = folder / f"{trace_id}.json"
+            if path.parent == folder and path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        raise HTTPException(404, "No saved run with that id.")
 
     @app.post("/api/ask")
     async def ask(request: AskRequest, http: Request) -> StreamingResponse:

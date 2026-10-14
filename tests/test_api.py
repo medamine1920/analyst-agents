@@ -135,3 +135,20 @@ def test_the_scripted_console_answers_its_examples_and_says_so_for_other_questio
         assert scripted.get("/api/traces").json()[0]["label"] == demo_console.LABEL
         other = events_of(scripted.post("/api/ask", json={"question": "How many customers do we have?"}))
         assert "only answers its example questions" in next(e for e in other if e["type"] == "done")["answer"]
+
+
+def test_live_runs_are_saved_apart_from_the_demo_runs_and_both_are_listed(tmp_path):
+    demos, live = tmp_path / "demos", tmp_path / "live"
+    demos.mkdir()
+    (demos / "demo-1.json").write_text(json.dumps({"id": "demo-1", "question": "Demo?", "label": "Demo", "created": "1",
+                                                   "events": []}))
+    app = create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn, results_dir=tmp_path, traces_dir=demos,
+                     live_traces_dir=live, checkpoint_db=tmp_path / "c.sqlite", auth=False,
+                     security_db=tmp_path / "console.sqlite")
+    with TestClient(app) as client:
+        saved = next(e for e in events_of(client.post("/api/ask", json={"question": "How many orders were placed?"}))
+                     if e["type"] == "saved")
+        assert (live / f"{saved['id']}.json").exists() and not (demos / f"{saved['id']}.json").exists()
+        assert {t["id"] for t in client.get("/api/traces").json()} == {"demo-1", saved["id"]}
+        assert client.get("/api/traces/demo-1").json()["question"] == "Demo?"
+        assert client.get(f"/api/traces/{saved['id']}").status_code == 200

@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import App from "../App";
 import Ask from "../views/Ask";
 import Evals from "../views/Evals";
+import History from "../views/History";
 import Metrics from "../views/Metrics";
 import metrics from "./metrics.json";
 import trace from "./trace.json";
@@ -43,9 +44,11 @@ afterEach(cleanup);
 test("metrics view lists every governed metric and filters by search", async () => {
   render(<Metrics />);
   expect(await screen.findByText("revenue_pre_tax")).toBeTruthy();
-  expect(screen.getAllByRole("listitem").length).toBe(12);
+  const metricRows = () => screen.getAllByRole("row").length - 1; // minus the header row
+  expect(metricRows()).toBe(12);
+  expect(screen.getAllByRole("link", { name: "Ask about this" })[0].getAttribute("href")).toMatch(/^#ask\?mode=live&q=/);
   fireEvent.change(screen.getByPlaceholderText(/Search/), { target: { value: "tax" } });
-  expect(screen.getAllByRole("listitem").length).toBeLessThan(12);
+  expect(metricRows()).toBeLessThan(12);
   fireEvent.change(screen.getByPlaceholderText(/Search/), { target: { value: "zzz" } });
   expect(screen.getByText(/No metric matches/)).toBeTruthy();
 });
@@ -185,4 +188,32 @@ test("a repeated question shows the saved answer, and Ask again runs it fresh", 
   fireEvent.click(screen.getByRole("button", { name: "Ask again" }));
   await waitFor(() => expect(posts[1]).toEqual({ question: trace.question, interactive: true, fresh: true }));
   await waitFor(() => expect(screen.queryByText(/Saved answer from/)).toBeNull());
+});
+
+test("a replayed answer has Data and Chart tabs built from the computed numbers", async () => {
+  render(<Ask params={{ trace: trace.id }} />);
+  expect(await screen.findByRole("heading", { name: trace.question })).toBeTruthy();
+  fireEvent.click(await screen.findByRole("tab", { name: /Data/ }));
+  const answer = within(screen.getByRole("region", { name: "Answer" }));
+  expect(answer.getByRole("heading", { name: "Revenue by store" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Download CSV" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "Chart" }));
+  // One breakdown by store: horizontal bars, largest first, one per store, readable without hovering.
+  const bars = screen.getAllByLabelText(/^(Philadelphia|Brooklyn): /);
+  expect(bars.map((b) => b.getAttribute("aria-label"))).toEqual(["Philadelphia: 425,467", "Brooklyn: 211,977"]);
+  expect(screen.getByRole("combobox", { name: "Metric" })).toBeTruthy();
+});
+
+test("history lists your questions with their status in words and links to reopen them", async () => {
+  const rows = [
+    { question: "Which store had the higher income?", asked_at: 1791900000, status: "reused", tokens: 0, trace_id: "t-1" },
+    { question: "How many orders?", asked_at: 1791800000, status: "failed", tokens: 1200, trace_id: null },
+  ];
+  globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => rows }));
+  render(<History />);
+  expect(await screen.findByText("Saved answer")).toBeTruthy();
+  expect(screen.getByText("Failed")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Open" }).getAttribute("href")).toBe("#ask?trace=t-1");
+  expect(screen.getByRole("link", { name: "Ask again" }).getAttribute("href")).toContain("q=How+many+orders");
+  expect(screen.getByText(/used 1,200 model tokens/)).toBeTruthy();
 });

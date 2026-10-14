@@ -76,7 +76,7 @@ function SetSection({ setName, runs }) {
   return (
     <section className="space-y-4">
       <h2 className="font-display text-xl font-semibold">{SET_NAMES[setName] ?? setName}</h2>
-      <div className="overflow-x-auto rounded-xl border border-rule bg-surface">
+      <div className="relative overflow-x-auto rounded-xl border border-rule bg-surface">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="text-left text-muted">

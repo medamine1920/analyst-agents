@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { formatNumber } from "./lib/format";
 import { getJSON, postJSON } from "./lib/api";
+import { formatNumber } from "./lib/format";
+import { parseHash } from "./lib/route";
 import Ask from "./views/Ask";
 import Evals from "./views/Evals";
+import History from "./views/History";
 import Metrics from "./views/Metrics";
 import SignIn from "./views/SignIn";
 
 const VIEWS = [
-  { id: "ask", label: "Ask", component: Ask },
-  { id: "evals", label: "Evaluations", component: Evals },
-  { id: "metrics", label: "Metrics", component: Metrics },
+  { id: "ask", label: "Ask", hint: "Ask a question or replay a run", component: Ask },
+  { id: "history", label: "History", hint: "Your questions and what they cost", component: History },
+  { id: "metrics", label: "Metrics", hint: "The governed metric catalog", component: Metrics },
+  { id: "evals", label: "Evaluations", hint: "How often the agent is right", component: Evals },
 ];
 
-function currentView() {
-  const id = window.location.hash.replace("#", "");
-  return VIEWS.find((v) => v.id === id) ?? VIEWS[0];
+function currentRoute() {
+  const { view, params } = parseHash();
+  return { view: VIEWS.find((v) => v.id === view) ?? VIEWS[0], params };
 }
 
 /** Who is signed in and how much of today's budget is left; null until the first answer arrives. */
@@ -41,60 +44,104 @@ function useSession() {
   return [session, refresh];
 }
 
-function Account({ session, onSignOut }) {
-  if (!session?.auth || !session.user) return null;
-  const usage = session.usage;
+/** Today's shared token budget as a meter: the track is a lighter step of the fill's own hue. */
+function BudgetMeter({ usage }) {
+  const left = usage.tokens_left / Math.max(usage.daily_tokens, 1);
   return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-      <span>
-        Signed in as <span className="text-ink">{session.user}</span>
-      </span>
-      {usage && <span>{formatNumber(usage.tokens_left)} model tokens left today</span>}
-      <button type="button" onClick={onSignOut} className="underline hover:text-ink">
-        Sign out
-      </button>
-    </p>
+    <div className="space-y-1.5">
+      <p className="text-sm">{formatNumber(usage.tokens_left)} model tokens left today</p>
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-meter-track"
+        role="meter"
+        aria-label="Model tokens left today"
+        aria-valuemin={0}
+        aria-valuemax={usage.daily_tokens}
+        aria-valuenow={usage.tokens_left}
+      >
+        <div className={`h-full rounded-full ${left < 0.1 ? "bg-fail" : "bg-series-1"}`} style={{ width: `${left * 100}%` }} />
+      </div>
+      <p className="text-xs text-muted">
+        Shared by everyone · {usage.questions_last_hour} of {usage.questions_per_hour} questions this hour
+      </p>
+    </div>
+  );
+}
+
+function Sidebar({ current, session, onSignOut }) {
+  const signedIn = session?.auth && session.user;
+  return (
+    <aside className="border-b border-rule bg-surface lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-60 lg:flex-col lg:border-r lg:border-b-0">
+      <div className="px-5 pt-5 pb-3">
+        <p className="font-display text-lg leading-none font-bold tracking-tight">Analyst Console</p>
+        <p className="mt-1.5 text-xs text-muted">Answers from governed business metrics, every step shown.</p>
+      </div>
+      <nav aria-label="Views" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-col lg:overflow-visible">
+        {VIEWS.map((v) => (
+          <a
+            key={v.id}
+            href={`#${v.id}`}
+            aria-current={v.id === current.id ? "page" : undefined}
+            title={v.hint}
+            className={`rounded-md px-2.5 py-1.5 text-sm font-medium whitespace-nowrap ${
+              v.id === current.id ? "bg-paper text-ink" : "text-muted hover:bg-paper hover:text-ink"
+            }`}
+          >
+            {v.label}
+          </a>
+        ))}
+      </nav>
+      {signedIn && (
+        <div className="hidden space-y-4 border-t border-rule px-5 py-4 lg:mt-auto lg:block">
+          {session.usage && <BudgetMeter usage={session.usage} />}
+          <p className="flex items-center justify-between gap-2 text-sm text-muted">
+            <span>
+              Signed in as <span className="text-ink">{session.user}</span>
+            </span>
+            <button type="button" onClick={onSignOut} className="underline hover:text-ink">
+              Sign out
+            </button>
+          </p>
+        </div>
+      )}
+    </aside>
   );
 }
 
 export default function App() {
-  const [view, setView] = useState(currentView);
+  const [route, setRoute] = useState(currentRoute);
   const [session, refresh] = useSession();
   useEffect(() => {
-    const onHash = () => setView(currentView());
+    const onHash = () => setRoute(currentRoute());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   if (session === null) return null; // checking the session: render nothing rather than flash the sign-in form
   if (session.auth && !session.user) return <SignIn onSignedIn={refresh} />;
   const signOut = () => postJSON("/api/auth/logout").finally(refresh);
+  const { view, params } = route;
   const View = view.component;
   return (
-    <div className="mx-auto max-w-7xl px-5 pb-16 sm:px-8">
-      <header className="flex flex-col gap-4 border-b border-rule py-6 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="font-display text-[1.75rem] leading-none font-bold tracking-tight">Analyst Console</h1>
-          <p className="mt-2 text-muted">Answers from governed business metrics, with every step shown.</p>
-        </div>
-        <div className="flex flex-col gap-3 sm:items-end">
-        <Account session={session} onSignOut={signOut} />
-        <nav aria-label="Views" className="flex gap-6">
-          {VIEWS.map((v) => (
-            <a
-              key={v.id}
-              href={`#${v.id}`}
-              aria-current={v.id === view.id ? "page" : undefined}
-              className={`border-b-2 pb-1 font-medium ${v.id === view.id ? "border-model text-ink" : "border-transparent text-muted hover:text-ink"}`}
-            >
-              {v.label}
-            </a>
-          ))}
-        </nav>
-        </div>
-      </header>
-      <main className="pt-8">
-        <View />
-      </main>
+    <div className="min-h-screen">
+      <Sidebar current={view} session={session} onSignOut={signOut} />
+      <div className="lg:pl-60">
+        <header className="flex flex-wrap items-end justify-between gap-2 border-b border-rule px-5 py-4 sm:px-8">
+          <div>
+            <h1 className="text-xl font-semibold">{view.label}</h1>
+            <p className="text-sm text-muted">{view.hint}</p>
+          </div>
+          {session.auth && session.user && (
+            <p className="text-sm text-muted lg:hidden">
+              {session.usage && <span>{formatNumber(session.usage.tokens_left)} tokens left · </span>}
+              <button type="button" onClick={signOut} className="underline hover:text-ink">
+                Sign out
+              </button>
+            </p>
+          )}
+        </header>
+        <main className="px-5 py-6 pb-16 sm:px-8">
+          <View params={params} />
+        </main>
+      </div>
     </div>
   );
 }

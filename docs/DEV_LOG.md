@@ -105,6 +105,21 @@ answer failed the check, are never reused. "Ask again" runs the agent fresh. Sug
 questions as the user types (most asked first, marked when a free saved answer exists) and metrics
 named by the typed words. Checked live: 2,779 tokens the first time, 0 the second.
 
+## 2026-10-14: an interface for analysts
+
+The console became a working tool rather than a demo: a sidebar (Ask, History, Metrics,
+Evaluations, the day's token budget as a meter), answers in three tabs (Answer; Data, with every
+computed table and a CSV download each; Chart), a History view of the user's questions with status
+in words and what each cost, and the metric catalog as a table with "Ask about this". Charts are
+drawn in code from the computed rows, never from the model's text: one breakdown gives horizontal
+bars, a period gives a line, period × group gives up to four lines with a legend and end labels,
+plain totals give number tiles; anything else stays a table. The four chart colours were checked
+with a colour-vision validator rather than by eye. CSV export neutralizes cells that would run as
+spreadsheet formulas. Live runs moved into the volume, so History survives deploys. Two layout
+bugs were found by measuring the page instead of looking at it: the answer grid had no column
+width, so a wide table stretched it to 1,561px in a 727px window; and screen-reader-only header
+labels escaped their scrolling tables and widened the page on phones.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that

@@ -22,6 +22,8 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
       # The console starts its own MCP server as a child process, over stdio.
       MCP_TRANSPORT: stdio
+      # Live runs and paused questions are kept in the volume, so history survives a redeploy.
+      LIVE_TRACES_DIR: /srv/checkpoints/traces
     volumes:
       - console-checkpoints:/srv/checkpoints
     networks:

@@ -15,6 +15,17 @@
   --color-partial-tint: #fdf4d8;
   --color-fail: #b54708;
   --color-fail-tint: #fcefe4;
+  /* Charts: categorical slots in fixed order (validated: adjacent CVD ΔE ≥ 9.1 on white; slots 3 and 4
+     are below 3:1 contrast, so every chart carries direct labels or a legend, and the Data tab is its table). */
+  --color-series-1: #2a78d6;
+  --color-series-2: #eb6834;
+  --color-series-3: #1baf7a;
+  --color-series-4: #eda100;
+  --color-ink-2: #52514e;
+  --color-chart-grid: #e1e0d9;
+  --color-chart-axis: #c3c2b7;
+  --color-chart-muted: #898781;
+  --color-meter-track: #cde2fb;
   --font-display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;

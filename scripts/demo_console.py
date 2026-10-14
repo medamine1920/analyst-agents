@@ -46,4 +46,5 @@ async def write_fn(messages: list):
     return demo["answer"], {}
 
 
-app = create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn, trace_label=LABEL)
+# Local development only: no sign-in, so the console opens straight away.
+app = create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn, trace_label=LABEL, auth=False)

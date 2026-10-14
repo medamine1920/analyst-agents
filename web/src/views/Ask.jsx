@@ -175,6 +175,7 @@ export default function Ask() {
       if (ev.type === "approval") setApproval(ev);
       if (ev.type === "done") setShown((s) => ({ ...s, done: ev }));
       if (ev.type === "saved") loadTraces();
+      if (ev.type === "saved" || ev.type === "approval") window.dispatchEvent(new Event("analyst:question-finished"));
       if (ev.type === "error") setError(`The run stopped: ${ev.message}`);
     };
     try {

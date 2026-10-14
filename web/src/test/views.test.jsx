@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+import App from "../App";
 import Ask from "../views/Ask";
 import Evals from "../views/Evals";
 import Metrics from "../views/Metrics";
@@ -117,4 +118,40 @@ test("a live question pauses on an ambiguous term and resumes with the chosen de
   expect(posts[1]).toEqual(["/api/resume", { thread_id: "a".repeat(32), choice: { income: "revenue_with_tax" } }]);
   await waitFor(() => expect(screen.getByText(/every number in this answer comes from the computed results/)).toBeTruthy());
   expect(screen.queryByText(/Which one do you mean/)).toBeNull();
+});
+
+test("the console asks for sign-in, then shows the account and today's budget", async () => {
+  let signedIn = false;
+  const posts = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (options?.method === "POST") {
+      posts.push([url, JSON.parse(options.body)]);
+      if (url === "/api/auth/login") {
+        const ok = JSON.parse(options.body).password === "correct horse battery";
+        signedIn = ok;
+        return ok
+          ? { ok: true, json: async () => ({ user: "ana" }) }
+          : { ok: false, status: 401, json: async () => ({ detail: "Wrong name or password." }) };
+      }
+    }
+    if (url === "/api/auth/me") {
+      const usage = { tokens_left: 145750, daily_tokens: 150000 };
+      return { ok: true, json: async () => (signedIn ? { user: "ana", auth: true, usage } : { user: null, auth: true }) };
+    }
+    const body = RESPONSES[url];
+    return body ? { ok: true, json: async () => body } : { ok: false, status: 404, json: async () => ({}) };
+  });
+
+  render(<App />);
+  fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "ana" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong password!" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText("Wrong name or password.")).toBeTruthy();
+
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "correct horse battery" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText("145,750 model tokens left today")).toBeTruthy();
+  expect(screen.getByText("ana")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Ask" })).toBeTruthy();
+  expect(posts[0][1]).toEqual({ name: "ana", password: "wrong password!" });
 });

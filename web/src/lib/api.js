@@ -1,7 +1,37 @@
+/** Tell the app the session ended (expired, or signed out elsewhere), so it shows the sign-in screen. */
+function signedOut(response) {
+  if (response.status === 401) window.dispatchEvent(new Event("analyst:signed-out"));
+}
+
+/** The API's own explanation ("Today's budget ... is used up"), or a generic one. */
+async function reason(response, fallback) {
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "string") return body.detail;
+  } catch {
+    // not JSON: use the fallback
+  }
+  return fallback;
+}
+
 export async function getJSON(path) {
   const response = await fetch(path);
   if (!response.ok) {
-    throw new Error(`The API returned ${response.status} for ${path}. Is it running on port 8001?`);
+    signedOut(response);
+    throw new Error(await reason(response, `The API returned ${response.status} for ${path}. Is it running on port 8001?`));
+  }
+  return response.json();
+}
+
+export async function postJSON(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!response.ok) {
+    if (path !== "/api/auth/login") signedOut(response);
+    throw new Error(await reason(response, `The API refused the request (${response.status}).`));
   }
   return response.json();
 }
@@ -24,8 +54,8 @@ async function streamPost(path, body, onEvent, signal) {
     signal,
   });
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`The API refused the request (${response.status}): ${detail.slice(0, 200)}`);
+    signedOut(response);
+    throw new Error(await reason(response, `The API refused the request (${response.status}).`));
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

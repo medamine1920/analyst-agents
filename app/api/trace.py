@@ -77,7 +77,7 @@ async def stream_trace(graph: Any, question: str, *, thread_id: str | None = Non
             elapsed = round(time.perf_counter() - started, 2)
             if node == "__interrupt__":
                 yield {"type": "approval", "thread_id": thread_id, "elapsed_s": elapsed,
-                       **jsonable(update[0].value)}
+                       "usage": usage_totals(usage), **jsonable(update[0].value)}
                 return
             update = update or {}
             usage = update.get("usage", usage)

@@ -82,6 +82,17 @@ Cheaper testing (the daily limit of 200K tokens allows about 40 questions):
 
 Tests: 71 Python (4 new), 4 web.
 
+## 2026-10-14: the public console gets sign-in and a budget
+
+With a working key on a public address, anyone could spend the day's Groq quota. Added
+`app/api/security.py`: accounts created by the operator only (`python -m app.api.users add`),
+scrypt password hashes, session cookies (HttpOnly, SameSite=Lax) stored only as hashes, a lock
+after five wrong passwords, a shared daily token budget (150,000 of Groq's 200,000, leaving room
+for evals), 30 questions per user per hour, at most two live runs at once, and an audit log of
+every question with its user, status, tokens and trace. A middleware guards every `/api/*` route
+except health and sign-in, so a new route cannot be left open by accident. 8 new Python tests and
+1 web test; checked by hand in the browser.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that

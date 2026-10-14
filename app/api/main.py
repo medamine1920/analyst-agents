@@ -5,19 +5,24 @@
 A live question can pause to ask which definition of a business term is meant: /api/ask then ends
 with an "approval" event, and /api/resume continues the same run with the answer. Paused runs are
 kept on disk (LangGraph checkpoints plus the steps streamed so far), so they survive a restart.
+
+Every route except /api/health and sign-in needs a signed-in user (see security.py); CONSOLE_AUTH=off
+turns that off for local development. Live questions also stop when the day's token budget is spent.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from mcp import Client
 from pydantic import BaseModel, Field
@@ -30,16 +35,31 @@ from app.agents.orchestrated.graph import (
     thread_config,
 )
 from app.agents.orchestrated.plan import ALL_DEFINITIONS
+from app.api.security import (
+    SESSION_COOKIE,
+    SESSION_HOURS,
+    LimitReached,
+    Limits,
+    SecurityStore,
+)
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = REPO_ROOT / "evals" / "results"
 WEB_DIST = REPO_ROOT / "web" / "dist"
+# Groq's free tier allows 8K tokens a minute, so a few runs at once already hit the limit: the rest wait.
+MAX_LIVE_RUNS = int(os.environ.get("MAX_LIVE_RUNS", "2"))
+OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me"}
 
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     interactive: bool = Field(default=False, description="Pause and ask when a business term is ambiguous")
+
+
+class SignInRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
 
 
 class ResumeRequest(BaseModel):
@@ -52,10 +72,17 @@ def sse(event: dict) -> str:
 
 
 def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir: Path = RESULTS_DIR,
-               traces_dir: Path = TRACES_DIR, checkpoint_db: Path | None = None, trace_label: str = "") -> FastAPI:
-    """Build the API. Tests pass an in-process MCP server and scripted planner/writer."""
+               traces_dir: Path = TRACES_DIR, checkpoint_db: Path | None = None, trace_label: str = "",
+               auth: bool | None = None, security_db: Path | None = None, limits: Limits | None = None) -> FastAPI:
+    """Build the API. Tests pass an in-process MCP server and scripted planner/writer.
+
+    auth=None reads CONSOLE_AUTH: sign-in is required unless it is "off".
+    """
     load_dotenv(REPO_ROOT / ".env")
     state: dict[str, Any] = {}
+    auth = (os.environ.get("CONSOLE_AUTH", "on").lower() != "off") if auth is None else auth
+    store, limits = SecurityStore(security_db), limits or Limits.from_env()
+    live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
     paused_dir = traces_dir / "paused"  # the steps already shown for runs waiting on the user
 
     @asynccontextmanager
@@ -65,6 +92,44 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             yield
 
     app = FastAPI(title="Analyst Console API", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def require_sign_in(request: Request, call_next):
+        """Every API route needs a signed-in user, so a new route cannot be left open by accident."""
+        request.state.user = "local" if not auth else store.user_for(request.cookies.get(SESSION_COOKIE))
+        if request.url.path.startswith("/api/") and request.url.path not in OPEN_PATHS and not request.state.user:
+            return JSONResponse({"detail": "Sign in to use the console."}, status_code=401)
+        return await call_next(request)
+
+    @app.post("/api/auth/login")
+    async def sign_in(body: SignInRequest, request: Request, response: Response) -> dict:
+        try:
+            token = store.sign_in(body.name, body.password)
+        except LimitReached as exc:
+            raise HTTPException(429, str(exc)) from exc
+        if token is None:
+            raise HTTPException(401, "Wrong name or password.")
+        https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+        response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True,
+                            samesite="lax", secure=https, path="/")
+        return {"user": body.name}
+
+    @app.post("/api/auth/logout")
+    async def sign_out(request: Request, response: Response) -> dict:
+        store.sign_out(request.cookies.get(SESSION_COOKIE))
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"user": None}
+
+    @app.get("/api/auth/me")
+    async def me(request: Request) -> dict:
+        """Who is signed in (null if nobody), and how much of today's budget is left."""
+        user = request.state.user
+        return {"user": user, "auth": auth, "usage": store.usage(user, limits) if user else None}
+
+    @app.get("/api/history")
+    async def history(request: Request) -> list[dict]:
+        """The signed-in user's recent questions, newest first."""
+        return store.history(request.state.user, limit=50)
 
     def graph():
         if "graph" not in state:
@@ -77,24 +142,39 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             state["graph"] = orchestrated.build_graph(state["gateway"], planner, writer, state["checkpointer"])
         return state["graph"]
 
-    def respond(question: str, thread_id: str, stream, earlier: list[dict]) -> StreamingResponse:
-        """Stream a run. When it pauses, keep its steps; when it finishes, save the whole trace."""
+    def spent(event: dict) -> int:
+        usage = event.get("usage") or {}
+        return usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+
+    def respond(question: str, thread_id: str, stream, earlier: list[dict], question_id: int | None) -> StreamingResponse:
+        """Stream a run. When it pauses, keep its steps; when it finishes, save the whole trace.
+
+        The audit log follows the run: waiting, answered or failed, with the tokens it spent.
+        """
         async def events():
             collected = list(earlier)
             paused_file = paused_dir / f"{thread_id}.json"
             try:
-                async for event in stream:
-                    collected.append(event)
-                    yield sse(event)
-                if collected[-1]["type"] == "approval":
+                async with live_runs:
+                    async for event in stream:
+                        collected.append(event)
+                        yield sse(event)
+                last = collected[-1]
+                if last["type"] == "approval":
                     paused_dir.mkdir(parents=True, exist_ok=True)
                     paused_file.write_text(json.dumps({"question": question, "events": collected}), encoding="utf-8")
-                elif collected[-1]["type"] == "done":
+                    if question_id:
+                        store.finish_question(question_id, "waiting", spent(last))
+                elif last["type"] == "done":
                     trace_id = save_trace(question, collected, traces_dir, label=trace_label)
                     paused_file.unlink(missing_ok=True)
                     await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
+                    if question_id:
+                        store.finish_question(question_id, "answered", spent(last), trace_id)
                     yield sse({"type": "saved", "id": trace_id})
             except Exception as exc:  # noqa: BLE001 - report any failure to the console, never hang the stream
+                if question_id:
+                    store.finish_question(question_id, "failed")
                 yield sse({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
 
         return StreamingResponse(events(), media_type="text/event-stream")
@@ -149,13 +229,21 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return json.loads(path.read_text(encoding="utf-8"))
 
     @app.post("/api/ask")
-    async def ask(request: AskRequest) -> StreamingResponse:
+    async def ask(request: AskRequest, http: Request) -> StreamingResponse:
         thread_id = uuid.uuid4().hex
+        try:
+            question_id = store.start_question(http.state.user, request.question, limits, thread_id)
+        except LimitReached as exc:
+            raise HTTPException(429, str(exc)) from exc
         stream = stream_trace(graph(), request.question, thread_id=thread_id, interactive=request.interactive)
-        return respond(request.question, thread_id, stream, [])
+        return respond(request.question, thread_id, stream, [], question_id)
 
     @app.post("/api/resume")
     async def resume(request: ResumeRequest) -> StreamingResponse:
+        try:
+            store.check_budget(limits)  # the rest of a paused run still spends tokens
+        except LimitReached as exc:
+            raise HTTPException(429, str(exc)) from exc
         snapshot = await graph().aget_state(thread_config(request.thread_id))
         waiting = pending_approval(snapshot)
         if waiting is None:
@@ -170,7 +258,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         earlier = saved.get("events", [])
         stream = stream_trace(graph(), "", thread_id=request.thread_id, resume=request.choice,
                               elapsed_before=earlier[-1]["elapsed_s"] if earlier else 0.0)
-        return respond(snapshot.values["question"], request.thread_id, stream, earlier)
+        return respond(snapshot.values["question"], request.thread_id, stream, earlier,
+                       store.question_for_thread(request.thread_id))
 
     if WEB_DIST.exists():  # production: the built console is served by the same process
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

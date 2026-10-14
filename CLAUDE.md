@@ -6,7 +6,7 @@ Multi-agent data analyst that answers multi-step business questions over a gover
 
 - Windows laptop, Python 3.12, virtual env `.agent`. Activate in PowerShell: `.agent\Scripts\Activate.ps1`; in Git Bash: `source .agent/Scripts/activate`.
 - LLM: Groq free tier only, model `openai/gpt-oss-120b` (`GROQ_API_KEY` in `.env`, never committed; `GROQ_MODEL` overrides). Limits: 8K tokens/minute, 200K tokens/day. Gemini is not available from the user's location.
-- Server: Hetzner CX22 (Ubuntu 24.04), reachable only over Tailscale; its address is in the `DEPLOY_HOST` GitHub secret. Deployed by CI (`scripts/deploy.sh` via a forced-command SSH key), never by hand. Two containers from one image: `analyst-agents-mcp` (`127.0.0.1:8100`) and `analyst-agents-console` (`127.0.0.1:8200`). The console is public at `analyst.medamine.work` through the server's Caddy container, which reaches it on the external Docker network `web` (declared in `docker-compose.yml`; the Caddyfile itself lives outside this repo). `/api/ask` has no login yet, so anyone with the address can spend the Groq quota. The console's Groq key comes from `~/apps/analyst-agents/.env` on the server (git-ignored, survives deploys, never in the image); after changing it, run `docker compose up -d` there.
+- Server: Hetzner CX22 (Ubuntu 24.04), reachable only over Tailscale; its address is in the `DEPLOY_HOST` GitHub secret. Deployed by CI (`scripts/deploy.sh` via a forced-command SSH key), never by hand. Two containers from one image: `analyst-agents-mcp` (`127.0.0.1:8100`) and `analyst-agents-console` (`127.0.0.1:8200`). The console is public at `analyst.medamine.work` through the server's Caddy container, which reaches it on the external Docker network `web` (declared in `docker-compose.yml`; the Caddyfile itself lives outside this repo). Sign-in is required (accounts are created on the server with `docker exec -it analyst-agents-console python -m app.api.users add <name>`; there is no sign-up page). The console's Groq key comes from `~/apps/analyst-agents/.env` on the server (git-ignored, survives deploys, never in the image); after changing it, run `docker compose up -d` there.
 - Repo: github.com/medamine1920/analyst-agents.
 
 ## Architecture (bottom to top; each layer reads only the one below)
@@ -20,7 +20,7 @@ Multi-agent data analyst that answers multi-step business questions over a gover
    - `baseline.py`: LangGraph ReAct loop (the comparison point). `reliability.py`: shared harness (retry malformed tool calls, 8-round budget, then a forced answer). `mcp_tools.py`: own MCP → LangChain adapter.
    - `orchestrated/`: `resolve` (glossary) → `plan` (LLM, JSON-schema `Plan`, validated) → `clarify` (code; only in interactive runs with an active ambiguity: pauses with `interrupt()` and asks the user which definition is meant) → `execute` (code, MCP) → `analyze` (code) → `write` (LLM) → `review` (code). Replan up to 3 attempts, rewrite once. Files: `glossary.py` (+ `app/semantic/glossary.yml`), `plan.py`, `gateway.py`, `analysis.py`, `review.py`, `graph.py`, `cache.py` (development-only disk cache of model answers).
 7. **Evals** `evals/`: question sets v1 (10), v2 (12), v3 held-out (8); `scoring.py`, `run_eval.py`, `agents.py`, `report.py`, `rescore.py`; results in `evals/results/*.jsonl`.
-8. **Console** (Phase 7a): FastAPI `app/api/` (metrics, evals, saved traces, `POST /api/ask` streaming each step as server-sent events and saving a replayable trace; with `interactive: true` it can end with an `approval` event, and `POST /api/resume {thread_id, choice}` continues the run) + React 19 / Vite 8 / Tailwind 4 in `web/` (Node 20.19+). Demo traces `traces/demo-*.json` use real data with scripted model steps and are labeled as demos. Deployed as the `console` service in `docker-compose.yml` (serves the built web app and the API on one port; starts its own MCP server over stdio).
+8. **Console** (Phase 7a): FastAPI `app/api/` (metrics, evals, saved traces, `POST /api/ask` streaming each step as server-sent events and saving a replayable trace; with `interactive: true` it can end with an `approval` event, and `POST /api/resume {thread_id, choice}` continues the run) + React 19 / Vite 8 / Tailwind 4 in `web/` (Node 20.19+). Demo traces `traces/demo-*.json` use real data with scripted model steps and are labeled as demos. Deployed as the `console` service in `docker-compose.yml` (serves the built web app and the API on one port; starts its own MCP server over stdio). Security (`app/api/security.py`, SQLite at `checkpoints/console.sqlite`, `CONSOLE_DB` overrides): every `/api/*` route except health and sign-in needs a session cookie (HttpOnly, SameSite=Lax, 12 hours; passwords as scrypt hashes, sessions stored as hashes; 5 wrong passwords lock a name for 15 minutes); live questions stop at a shared daily token budget (`DAILY_TOKEN_BUDGET`, default 150,000) and a per-user hourly limit (`QUESTIONS_PER_HOUR`, default 30); at most `MAX_LIVE_RUNS` (2) run at once, the rest wait; every question is logged with its user, status, tokens and trace (`GET /api/history`). `CONSOLE_AUTH=off` turns sign-in off for local development.
 
 Operational database (Phase 4): LangGraph checkpoints in SQLite, `checkpoints/analyst.sqlite` (`CHECKPOINT_DB` overrides; not committed). Used by the console API and the interactive command line; evals run without it. The steps already streamed for a paused console run are kept in `traces/paused/`. Postgres later.
 
@@ -34,7 +34,7 @@ mf query --metrics revenue_pre_tax --group-by store__store_name --explain
 
 # Repo root
 ruff check .
-pytest -q                                    # 72 tests (unit + integration)
+pytest -q                                    # 80 tests (unit + integration)
 pytest -q -m "not integration"
 python -m app.agents.orchestrated.graph "<question>"
 python -m app.agents.orchestrated.graph --interactive "<question>"   # asks which definition is meant
@@ -45,7 +45,8 @@ python -m evals.run_eval --resume evals\results\<file>.jsonl
 python -m evals.rescore evals\results\<file>.jsonl
 python -m scripts.record_demo_traces             # or: ... 5  (only the fifth demo)
 
-# Console: two terminals
+# Console: two terminals (sign-in is on: create a local account first, or set $env:CONSOLE_AUTH = "off")
+python -m app.api.users add <name>
 uvicorn app.api.main:app --port 8001 --reload
 uvicorn scripts.demo_console:app --port 8001   # instead: scripted model, no key, no tokens (example questions only)
 $env:LLM_CACHE = "1"                           # reuse model answers from .llm_cache\ (command line and console, never evals)
@@ -86,17 +87,19 @@ Headline: on held-out questions, reliability 50% → 88% with 57% fewer tokens a
 
 The 100% on v2 is a regression check, not a headline, and it is not the whole truth: v2 is the set the fixes were developed on, and a spot check right after that run (`..._20261009-1604.jsonl`) failed m06 once. The planner asked for new customers by month and, separately, by store over all dates, and the answer gave Brooklyn's all-time 493 as March's 255. Counting both files, m06 is 3/4 on that version. Fixed on 2026-10-13 (see below) and not yet re-measured on the full set.
 
-## Where we are (2026-10-13)
+## Where we are (2026-10-14)
 
-Done since the last commit (`777bf42`), all uncommitted: v2 re-measure (100% / 100%, then the m06 miss above); Phase 4 human approval (graph, command line, API, console); the m06 fix (`ensure_drilldown` adds the period × category query when a plan splits them, `top_period` in the facts gives the top period with its own rows, every step states the dates it covers); eval results record the plan; a development cache for model answers (`LLM_CACHE=1`); a scripted console (`scripts/demo_console.py`). m06 passed 3/3 live after the fix, but none of those three plans had the split shape, so the fix itself is proven only by the scripted test.
+Live at `analyst.medamine.work` (commit `e1a0664`): Phase 4 human approval, the m06 fix, the development cache, the scripted console, the console as a compose service behind Caddy.
 
-1. **Confirm the console deploy** (added 2026-10-13): the Docker build with the web stage was not testable locally (no Docker daemon on the laptop), so check the Actions run and `docker ps` on the server after the first push.
-2. **Re-measure v2 in full** on the current code: `python -m evals.run_eval --agent orchestrated --set v2 --repeats 3`. It takes most of a day's quota (about 5,000 tokens per run now), so do it on a day with no other live testing.
-3. **Put the dev log back.** `docs/DEV_LOG.md` here holds only the entries from 2026-10-09 onwards; merge them into the original file (stories 40 and 41 included).
-4. **Review the console by eye** (approval card, "You" step, spacing): start the scripted console and `npm run dev`. It has only been checked as text and behavior.
-5. **Phase 5, memory:** remember resolved definitions per team so the same ambiguity is not asked twice. The `choices` field in the graph state is the place to pre-fill.
-6. **Phase 6, traces and cost:** Arize Phoenix (OpenTelemetry) per step; cost per question.
-7. **Phase 7, polish:** README (architecture diagram, results table, demo GIF); put the deployed console behind Tailscale or auth (today it is bound to the server's localhost only); a fresh held-out set (v4) to confirm the fixes generalize; final interview-story compilation; resume line update.
+Plan agreed on 2026-10-14 (the user asked for saved frequent questions, better suggestions, custom databases or API sources, more security and reliability, a professional analyst interface, and connectors). Order: security, then saved answers and suggestions, then the interface, then connectors; custom databases continue as the user's hands-on exercises. For these new features Claude builds and the user reviews before anything is pushed.
+
+1. **Security (built, not pushed; for the user's review):** sign-in, daily token budget, per-user hourly limit, at most two live runs at once, audit log of questions. Checked: 80 Python and 5 web tests, and by hand in the browser (sign-in, budget shown, cookie hidden from page scripts, sign-out). **Deploying it locks the public site until an account is created on the server.**
+2. **Saved answers and suggestions:** reuse an earlier answer to the same question (shown as saved, with a refresh), suggest popular past questions (from the audit log) and metric names as people type.
+3. **Professional analyst interface:** denser layout, tables and charts, CSV export, question history, metric browser.
+4. **Connectors:** the MCP server behind authentication for MCP clients, a REST API with API keys, optionally a Slack bot. Data from SaaS APIs has to be loaded into the warehouse first (every number must come from governed SQL metrics).
+5. **Custom databases (hands-on):** the user redoes step 1 by hand (exercise 1: `domains/<name>/domain.yml` and `app/domain.py`); Claude's worked version is on the local branch `step1-domain-pack-reference` (not pushed). Then a second sample company, then a non-DuckDB warehouse.
+6. **Re-measure v2 in full** on the current code (most of a day's quota).
+7. **Put the dev log back**, then Phases 5 to 7 as before.
 
 Known gaps: paused runs that are never answered stay in `checkpoints/` and `traces/paused/` (no expiry yet); a replan that reuses an earlier choice has no test; the reviewer checks that numbers exist in the facts, not that they are the right numbers for the sentence (the m06 miss passed review), so `top_period` narrows that hole without closing it; the virtual env runs Python 3.11, not the 3.12 named above.
 

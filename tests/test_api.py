@@ -44,7 +44,8 @@ def client(tmp_path):
     (results / "v2_orchestrated_test.jsonl").write_text(json.dumps(record) + "\n")
     def start():
         return TestClient(create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn, results_dir=results,
-                                     traces_dir=tmp_path / "traces", checkpoint_db=tmp_path / "checkpoints.sqlite"))
+                                     traces_dir=tmp_path / "traces", checkpoint_db=tmp_path / "checkpoints.sqlite",
+                                     auth=False, security_db=tmp_path / "console.sqlite"))
 
     with start() as test_client:
         test_client.restart = start  # a second app on the same files, as after a server restart
@@ -123,7 +124,7 @@ def test_the_scripted_console_answers_its_examples_and_says_so_for_other_questio
 
     app = create_app(mcp_target=server, plan_fn=demo_console.plan_fn, write_fn=demo_console.write_fn,
                      traces_dir=tmp_path / "traces", checkpoint_db=tmp_path / "c.sqlite",
-                     trace_label=demo_console.LABEL)
+                     trace_label=demo_console.LABEL, auth=False, security_db=tmp_path / "console.sqlite")
     with TestClient(app) as scripted:
         first = events_of(scripted.post("/api/ask", json={"question": "Which store had the higher income?",
                                                           "interactive": True}))

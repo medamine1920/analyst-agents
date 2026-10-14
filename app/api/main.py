@@ -73,6 +73,20 @@ class KeyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80, description="What the key is for, e.g. 'Sales sheet'")
 
 
+class PasswordChange(BaseModel):
+    current: str = Field(min_length=1, max_length=200)
+    new: str = Field(min_length=10, max_length=200)
+
+
+class InviteRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    role: str = Field(default="user", pattern="^(user|admin)$")
+
+
+class RoleChange(BaseModel):
+    role: str = Field(pattern="^(user|admin)$")
+
+
 class SignInRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
@@ -148,6 +162,10 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         finally:
             REQUEST_USER.reset(token)
 
+    def browser_only(request: Request) -> None:
+        if request.state.via == "key":
+            raise HTTPException(403, "API keys cannot manage keys or accounts: sign in to the console instead.")
+
     @app.post("/api/auth/login")
     async def sign_in(body: SignInRequest, request: Request, response: Response) -> dict:
         try:
@@ -171,7 +189,73 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     async def me(request: Request) -> dict:
         """Who is signed in (null if nobody), and how much of today's budget is left."""
         user = request.state.user
-        return {"user": user, "auth": auth, "usage": store.usage(user, limits) if user else None}
+        account = store.account(user) if auth and user else None
+        return {"user": user, "auth": auth, "usage": store.usage(user, limits) if user else None,
+                "role": account["role"] if account else ("admin" if user == "local" else None),
+                "must_change_password": bool(account and account["must_change"])}
+
+    @app.post("/api/account/password")
+    async def change_password(body: PasswordChange, request: Request, response: Response) -> dict:
+        """Change your own password. Every other session is signed out; this one gets a new cookie."""
+        browser_only(request)
+        user = request.state.user
+        try:
+            changed = store.change_password(user, body.current, body.new)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not changed:
+            raise HTTPException(403, "The current password is not right.")
+        token = store.sign_in(user, body.new)
+        https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+        response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True,
+                            samesite="lax", secure=https, path="/")
+        return {"changed": True}
+
+    def admin_only(request: Request) -> None:
+        browser_only(request)
+        account = store.account(request.state.user) if auth else {"role": "admin"}
+        if not account or account["role"] != "admin":
+            raise HTTPException(403, "Only an admin can manage accounts.")
+
+    @app.get("/api/admin/users")
+    async def list_accounts(request: Request) -> list[dict]:
+        admin_only(request)
+        return store.accounts()
+
+    @app.post("/api/admin/users")
+    async def invite(body: InviteRequest, request: Request) -> dict:
+        """A new account with a one-time password, shown this once."""
+        admin_only(request)
+        try:
+            return {"name": body.name, "role": body.role, "temporary_password": store.invite(body.name, body.role)}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/admin/users/{name}/reset")
+    async def reset(name: str, request: Request) -> dict:
+        admin_only(request)
+        try:
+            return {"name": name, "temporary_password": store.reset_password(name)}
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/admin/users/{name}/role")
+    async def change_role(name: str, body: RoleChange, request: Request) -> dict:
+        admin_only(request)
+        try:
+            store.set_role(name, body.role)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"name": name, "role": body.role}
+
+    @app.delete("/api/admin/users/{name}")
+    async def remove(name: str, request: Request) -> dict:
+        admin_only(request)
+        if name == request.state.user:
+            raise HTTPException(422, "You cannot remove your own account.")
+        if not store.remove_user(name):
+            raise HTTPException(404, f"No account called '{name}'.")
+        return {"removed": name}
 
     async def current_data_version() -> str:
         return data_version(await state["gateway"].context())
@@ -285,10 +369,6 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     # A plain route, not a mount: clients POST to /mcp exactly, with no redirect to /mcp/.
     app.router.routes.append(Route("/mcp", endpoint=McpEndpoint(), methods=["GET", "POST", "DELETE"]))
-
-    def browser_only(request: Request) -> None:
-        if request.state.via == "key":
-            raise HTTPException(403, "API keys cannot manage keys: sign in to the console instead.")
 
     @app.get("/api/keys")
     async def list_keys(request: Request) -> list[dict]:

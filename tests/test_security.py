@@ -119,3 +119,59 @@ def test_sign_in_ask_and_see_the_budget_go_down(api):
     assert refused.status_code == 429 and "budget" in refused.json()["detail"]
     api.post("/api/auth/logout")
     assert api.get("/api/metrics").status_code == 401
+
+
+def test_invited_accounts_must_choose_their_own_password(store):
+    temporary = store.invite("bob")
+    assert store.account("bob") == {**store.account("bob"), "role": "user", "must_change": True}
+    assert store.sign_in("bob", temporary)
+    assert not store.change_password("bob", "wrong password!", "bob's own password")
+    assert store.change_password("bob", temporary, "bob's own password")
+    assert not store.account("bob")["must_change"] and store.sign_in("bob", temporary) is None
+    with pytest.raises(ValueError):
+        store.invite("bob")  # already exists
+    with pytest.raises(ValueError):
+        store.invite("bad name!")
+
+
+def test_the_first_account_is_an_admin_and_one_admin_always_remains(tmp_path):
+    store = SecurityStore(tmp_path / "fresh.sqlite")
+    store.add_user("first", PASSWORD)
+    store.add_user("second", PASSWORD)
+    assert store.account("first")["role"] == "admin" and store.account("second")["role"] == "user"
+    with pytest.raises(ValueError, match="at least one admin"):
+        store.set_role("first", "user")
+    store.add_user("first", "a brand new password")
+    assert store.account("first")["role"] == "admin"  # a new password keeps the role
+
+
+def test_an_older_database_gets_roles_and_an_admin(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    db = sqlite3.connect(path)
+    db.execute("create table users (name text primary key, password_hash text not null, created_at real not null)")
+    db.execute("insert into users values ('amine', ?, 1)", (hash_password(PASSWORD),))
+    db.commit()
+    db.close()
+    store = SecurityStore(path)
+    assert store.account("amine")["role"] == "admin" and store.sign_in("amine", PASSWORD)
+
+
+@pytest.mark.integration
+def test_admins_manage_accounts_and_everyone_changes_their_own_password(api):
+    api.post("/api/auth/login", json={"name": "ana", "password": PASSWORD})  # ana is the first account: admin
+    assert api.get("/api/auth/me").json()["role"] == "admin"
+    invited = api.post("/api/admin/users", json={"name": "bob"}).json()
+    assert {a["name"] for a in api.get("/api/admin/users").json()} == {"ana", "bob"}
+    api.post("/api/auth/logout")
+
+    api.post("/api/auth/login", json={"name": "bob", "password": invited["temporary_password"]})
+    assert api.get("/api/auth/me").json()["must_change_password"]
+    assert api.get("/api/admin/users").status_code == 403  # not an admin
+    wrong = api.post("/api/account/password", json={"current": "nope", "new": "bob's own password"})
+    assert wrong.status_code == 403
+    assert api.post("/api/account/password", json={"current": invited["temporary_password"],
+                                                   "new": "bob's own password"}).status_code == 200
+    me = api.get("/api/auth/me").json()
+    assert me["user"] == "bob" and not me["must_change_password"]  # still signed in, with a new cookie

@@ -1,6 +1,6 @@
 """Manage console accounts. There is no sign-up page: the operator creates every account.
 
-    python -m app.api.users add <name>        (asks for the password twice)
+    python -m app.api.users add <name>        (asks for the password twice; --admin to make an admin)
     python -m app.api.users remove <name>
     python -m app.api.users list
 
@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", choices=["add", "remove", "list"])
     parser.add_argument("name", nargs="?")
+    parser.add_argument("--admin", action="store_true", help="the account can invite and manage others")
     args = parser.parse_args(argv)
     store = SecurityStore()
     if args.action == "list":
@@ -37,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         print("The passwords do not match; nothing changed.")
         return 1
     try:
-        store.add_user(args.name, password)
+        store.add_user(args.name, password, role="admin" if args.admin else None)
     except ValueError as exc:
         print(exc)
         return 1

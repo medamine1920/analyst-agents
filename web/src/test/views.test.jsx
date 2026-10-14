@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import App from "../App";
 import Ask from "../views/Ask";
+import Admin from "../views/Admin";
 import Connectors from "../views/Connectors";
 import Evals from "../views/Evals";
 import History from "../views/History";
@@ -240,4 +241,51 @@ test("connectors: a new key is shown once, and the examples use it", async () =>
   expect(screen.getByText(/last used never/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "I have stored it" }));
   expect(screen.queryByText(/ak_abcdefgh_secret/)).toBeNull(); // gone from the page once dismissed
+});
+
+test("an invited user must choose a password before anything else, then sees the console", async () => {
+  let mustChange = true;
+  const posts = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (options?.method === "POST") {
+      posts.push([url, JSON.parse(options.body)]);
+      mustChange = false;
+      return { ok: true, json: async () => ({ changed: true }) };
+    }
+    if (url === "/api/auth/me") {
+      return { ok: true, json: async () => ({ user: "bob", auth: true, role: "user", must_change_password: mustChange, usage: null }) };
+    }
+    const body = RESPONSES[url];
+    return body ? { ok: true, json: async () => body } : { ok: false, status: 404, json: async () => ({}) };
+  });
+  render(<App />);
+  expect(await screen.findByText(/The one you were given only works once/)).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Ask" })).toBeNull(); // nothing else until then
+  fireEvent.change(screen.getByLabelText("Password you were given"), { target: { value: "temporary1" } });
+  fireEvent.change(screen.getByLabelText("New password"), { target: { value: "bob's own password" } });
+  fireEvent.change(screen.getByLabelText("New password again"), { target: { value: "bob's own password" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+  expect(await screen.findByRole("link", { name: "Ask" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Admin" })).toBeNull(); // bob is not an admin
+  expect(posts[0]).toEqual(["/api/account/password", { current: "temporary1", new: "bob's own password" }]);
+});
+
+test("admins invite people and see the one-time password once", async () => {
+  let accounts = [{ name: "ana", role: "admin", must_change: false, created_at: 1, last_asked: null, tokens_today: 0 }];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (options?.method === "POST" && url === "/api/admin/users") {
+      accounts = [...accounts, { name: "sara", role: "user", must_change: true, created_at: 2, last_asked: null, tokens_today: 0 }];
+      return { ok: true, json: async () => ({ name: "sara", role: "user", temporary_password: "Tmp-xyz-123" }) };
+    }
+    return { ok: true, json: async () => accounts };
+  });
+  render(<Admin session={{ user: "ana", role: "admin" }} />);
+  expect(await screen.findByText("(you)")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull(); // no removing yourself
+  fireEvent.change(screen.getByPlaceholderText(/sign-in name/), { target: { value: "sara" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+  expect(await screen.findByText("Tmp-xyz-123")).toBeTruthy();
+  expect(await screen.findByText("has not chosen a password yet")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(screen.queryByText("Tmp-xyz-123")).toBeNull();
 });

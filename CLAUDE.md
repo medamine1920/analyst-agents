@@ -6,7 +6,7 @@ Multi-agent data analyst that answers multi-step business questions over a gover
 
 - Windows laptop, Python 3.12, virtual env `.agent`. Activate in PowerShell: `.agent\Scripts\Activate.ps1`; in Git Bash: `source .agent/Scripts/activate`.
 - LLM: Groq free tier only, model `openai/gpt-oss-120b` (`GROQ_API_KEY` in `.env`, never committed; `GROQ_MODEL` overrides). Limits: 8K tokens/minute, 200K tokens/day. Gemini is not available from the user's location.
-- Server: Hetzner CX22 (Ubuntu 24.04), reachable only over Tailscale; its address is in the `DEPLOY_HOST` GitHub secret. Deployed by CI (`scripts/deploy.sh` via a forced-command SSH key), never by hand. Two containers from one image: `analyst-agents-mcp` (`127.0.0.1:8100`) and `analyst-agents-console` (`127.0.0.1:8200`). The console is public at `analyst.medamine.work` through the server's Caddy container, which reaches it on the external Docker network `web` (declared in `docker-compose.yml`; the Caddyfile itself lives outside this repo). Sign-in is required (accounts are created on the server with `docker exec -it analyst-agents-console python -m app.api.users add <name>`; there is no sign-up page). The console's Groq key comes from `~/apps/analyst-agents/.env` on the server (git-ignored, survives deploys, never in the image); after changing it, run `docker compose up -d` there.
+- Server: Hetzner CX22 (Ubuntu 24.04), reachable only over Tailscale; its address is in the `DEPLOY_HOST` GitHub secret. Deployed by CI (`scripts/deploy.sh` via a forced-command SSH key), never by hand. Two containers from one image: `analyst-agents-mcp` (`127.0.0.1:8100`) and `analyst-agents-console` (`127.0.0.1:8200`). The console is public at `analyst.medamine.work` through the server's Caddy container, which reaches it on the external Docker network `web` (declared in `docker-compose.yml`; the Caddyfile itself lives outside this repo). Sign-in is required. Accounts are invite-only: an admin creates them on the Admin page (one-time password; the user must choose their own at first sign-in), resets passwords and removes accounts; everyone changes their own password on the Account page. The first account (and, on an older database, the oldest one) is the admin. On the server, `docker exec -it analyst-agents-console python -m app.api.users add <name> --admin` still works. The console's Groq key comes from `~/apps/analyst-agents/.env` on the server (git-ignored, survives deploys, never in the image); after changing it, run `docker compose up -d` there.
 - Repo: github.com/medamine1920/analyst-agents.
 
 ## Architecture (bottom to top; each layer reads only the one below)
@@ -34,7 +34,7 @@ mf query --metrics revenue_pre_tax --group-by store__store_name --explain
 
 # Repo root
 ruff check .
-pytest -q                                    # 90 tests (unit + integration)
+pytest -q                                    # 94 tests (unit + integration)
 pytest -q -m "not integration"
 python -m app.agents.orchestrated.graph "<question>"
 python -m app.agents.orchestrated.graph --interactive "<question>"   # asks which definition is meant

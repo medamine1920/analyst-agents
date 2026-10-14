@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -37,6 +38,8 @@ SESSION_HOURS = 12
 FAILED_LOGINS_ALLOWED = 5  # per user name, within FAILED_LOGIN_WINDOW_S; then wait
 FAILED_LOGIN_WINDOW_S = 15 * 60
 SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+ROLES = ("user", "admin")  # admins invite people, reset passwords and remove accounts
+USER_NAME = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 
 SCHEMA = """
 create table if not exists users (
@@ -101,6 +104,23 @@ class SecurityStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._db() as db:
             db.executescript(SCHEMA)
+            self._migrate(db)
+
+    @staticmethod
+    def _migrate(db: sqlite3.Connection) -> None:
+        """Bring a database made by an older version up to date, without losing anything.
+
+        Roles arrived after the first accounts: if no admin exists yet, the oldest account becomes one,
+        so whoever set up the console can invite the others from the Admin page.
+        """
+        columns = {row["name"] for row in db.execute("pragma table_info(users)")}
+        if "role" not in columns:
+            db.execute("alter table users add column role text not null default 'user'")
+        if "must_change" not in columns:
+            db.execute("alter table users add column must_change integer not null default 0")
+        if not db.execute("select 1 from users where role = 'admin'").fetchone():
+            db.execute("update users set role = 'admin' where name = "
+                       "(select name from users order by created_at limit 1)")
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -115,12 +135,79 @@ class SecurityStore:
 
     # ---- accounts ------------------------------------------------------------------------
 
-    def add_user(self, name: str, password: str) -> None:
+    def add_user(self, name: str, password: str, role: str | None = None, must_change: bool = False) -> None:
+        """Create an account, or give an existing one a new password (its role is kept unless given).
+
+        The very first account is an admin, so a new console always has someone who can invite others.
+        """
+        if not USER_NAME.match(name):
+            raise ValueError("Use 1 to 40 letters, digits, dots, dashes or underscores for the name.")
         if len(password) < 10:
             raise ValueError("Use a password of at least 10 characters.")
+        if role is not None and role not in ROLES:
+            raise ValueError(f"The role must be one of {', '.join(ROLES)}.")
         with self._db() as db:
-            db.execute("insert or replace into users values (?, ?, ?)", (name, hash_password(password), time.time()))
+            first = not db.execute("select 1 from users").fetchone()
+            db.execute("insert into users (name, password_hash, created_at, role, must_change) values (?, ?, ?, ?, ?) "
+                       "on conflict(name) do update set password_hash = excluded.password_hash, "
+                       "must_change = excluded.must_change" + (", role = excluded.role" if role else ""),
+                       (name, hash_password(password), time.time(), role or ("admin" if first else "user"),
+                        int(must_change)))
             db.execute("delete from sessions where user_name = ?", (name,))  # a new password signs out everywhere
+
+    def invite(self, name: str, role: str = "user") -> str:
+        """A new account with a one-time password; its owner must choose their own at first sign-in."""
+        if self.exists(name):
+            raise ValueError(f"An account called '{name}' already exists.")
+        temporary = secrets.token_urlsafe(9)
+        self.add_user(name, temporary, role=role, must_change=True)
+        return temporary
+
+    def reset_password(self, name: str) -> str:
+        if not self.exists(name):
+            raise ValueError(f"No account called '{name}'.")
+        temporary = secrets.token_urlsafe(9)
+        self.add_user(name, temporary, must_change=True)
+        return temporary
+
+    def change_password(self, name: str, current: str, new: str) -> bool:
+        """The owner's own change: the current password must be right. Signs out every other session."""
+        with self._db() as db:
+            row = db.execute("select password_hash from users where name = ?", (name,)).fetchone()
+        if not row or not check_password(current, row["password_hash"]):
+            return False
+        if new == current:
+            raise ValueError("Choose a password different from the current one.")
+        self.add_user(name, new, must_change=False)
+        return True
+
+    def exists(self, name: str) -> bool:
+        with self._db() as db:
+            return db.execute("select 1 from users where name = ?", (name,)).fetchone() is not None
+
+    def account(self, name: str) -> dict | None:
+        with self._db() as db:
+            row = db.execute("select name, role, must_change, created_at from users where name = ?", (name,)).fetchone()
+            return {**dict(row), "must_change": bool(row["must_change"])} if row else None
+
+    def set_role(self, name: str, role: str) -> None:
+        if role not in ROLES:
+            raise ValueError(f"The role must be one of {', '.join(ROLES)}.")
+        with self._db() as db:
+            others = db.execute("select count(*) from users where role = 'admin' and name != ?", (name,)).fetchone()[0]
+            if role == "user" and others == 0:
+                raise ValueError("Keep at least one admin.")
+            db.execute("update users set role = ? where name = ?", (role, name))
+
+    def accounts(self) -> list[dict]:
+        """Every account with its role and activity, for the Admin page."""
+        with self._db() as db:
+            rows = db.execute(
+                "select u.name, u.role, u.must_change, u.created_at, max(q.asked_at) as last_asked, "
+                "coalesce(sum(case when q.day = ? then q.tokens end), 0) as tokens_today "
+                "from users u left join questions q on q.user_name = u.name group by u.name order by u.name",
+                (today(),))
+            return [{**dict(row), "must_change": bool(row["must_change"])} for row in rows]
 
     def remove_user(self, name: str) -> bool:
         with self._db() as db:

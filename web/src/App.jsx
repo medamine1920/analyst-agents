@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { getJSON, postJSON } from "./lib/api";
 import { formatNumber } from "./lib/format";
 import { parseHash } from "./lib/route";
+import Account, { PasswordForm } from "./views/Account";
+import Admin from "./views/Admin";
 import Ask from "./views/Ask";
 import Connectors from "./views/Connectors";
 import Evals from "./views/Evals";
@@ -10,17 +12,24 @@ import History from "./views/History";
 import Metrics from "./views/Metrics";
 import SignIn from "./views/SignIn";
 
+// Two groups in the sidebar: the work itself, then the settings around it.
 const VIEWS = [
-  { id: "ask", label: "Ask", hint: "Ask a question or replay a run", component: Ask },
-  { id: "history", label: "History", hint: "Your questions and what they cost", component: History },
-  { id: "metrics", label: "Metrics", hint: "The governed metric catalog", component: Metrics },
-  { id: "evals", label: "Evaluations", hint: "How often the agent is right", component: Evals },
-  { id: "connectors", label: "Connectors", hint: "Use the analyst from other applications", component: Connectors },
+  { id: "ask", label: "Ask", hint: "Ask a question or replay a run", component: Ask, group: "Analyse" },
+  { id: "history", label: "History", hint: "Your questions and what they cost", component: History, group: "Analyse" },
+  { id: "metrics", label: "Metrics", hint: "The governed metric catalog", component: Metrics, group: "Analyse" },
+  { id: "evals", label: "Evaluations", hint: "How often the agent is right", component: Evals, group: "Analyse" },
+  { id: "connectors", label: "Connectors", hint: "Use the analyst from other applications", component: Connectors, group: "Settings" },
+  { id: "account", label: "Account", hint: "Your password and your account", component: Account, group: "Settings" },
+  { id: "admin", label: "Admin", hint: "Invite people and manage accounts", component: Admin, group: "Settings", admin: true },
 ];
+
+function visibleViews(session) {
+  return VIEWS.filter((v) => !v.admin || session?.role === "admin");
+}
 
 function currentRoute() {
   const { view, params } = parseHash();
-  return { view: VIEWS.find((v) => v.id === view) ?? VIEWS[0], params };
+  return { id: view, params };
 }
 
 /** Who is signed in and how much of today's budget is left; null until the first answer arrives. */
@@ -78,18 +87,22 @@ function Sidebar({ current, session, onSignOut }) {
         <p className="mt-1.5 text-xs text-muted">Answers from governed business metrics, every step shown.</p>
       </div>
       <nav aria-label="Views" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-col lg:overflow-visible">
-        {VIEWS.map((v) => (
-          <a
-            key={v.id}
-            href={`#${v.id}`}
-            aria-current={v.id === current.id ? "page" : undefined}
-            title={v.hint}
-            className={`rounded-md px-2.5 py-1.5 text-sm font-medium whitespace-nowrap ${
-              v.id === current.id ? "bg-paper text-ink" : "text-muted hover:bg-paper hover:text-ink"
-            }`}
-          >
-            {v.label}
-          </a>
+        {visibleViews(session).map((v, index, all) => (
+          <span key={v.id} className="contents">
+            {all[index - 1]?.group !== v.group && (
+              <span className="hidden px-2.5 pt-3 pb-1 text-xs font-medium tracking-wide text-muted uppercase lg:block">{v.group}</span>
+            )}
+            <a
+              href={`#${v.id}`}
+              aria-current={v.id === current.id ? "page" : undefined}
+              title={v.hint}
+              className={`rounded-md px-2.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                v.id === current.id ? "bg-paper text-ink" : "text-muted hover:bg-paper hover:text-ink"
+              }`}
+            >
+              {v.label}
+            </a>
+          </span>
         ))}
       </nav>
       {signedIn && (
@@ -119,8 +132,18 @@ export default function App() {
   }, []);
   if (session === null) return null; // checking the session: render nothing rather than flash the sign-in form
   if (session.auth && !session.user) return <SignIn onSignedIn={refresh} />;
+  if (session.must_change_password) {
+    return (
+      <div className="mx-auto mt-16 max-w-sm space-y-4 px-5">
+        <h1 className="font-display text-[1.75rem] leading-none font-bold tracking-tight">Welcome, {session.user}</h1>
+        <PasswordForm forced onChanged={refresh} />
+      </div>
+    );
+  }
   const signOut = () => postJSON("/api/auth/logout").finally(refresh);
-  const { view, params } = route;
+  const views = visibleViews(session);
+  const view = views.find((v) => v.id === route.id) ?? views[0];
+  const { params } = route;
   const View = view.component;
   return (
     <div className="min-h-screen">
@@ -141,7 +164,7 @@ export default function App() {
           )}
         </header>
         <main className="px-5 py-6 pb-16 sm:px-8">
-          <View params={params} />
+          <View params={params} session={session} />
         </main>
       </div>
     </div>

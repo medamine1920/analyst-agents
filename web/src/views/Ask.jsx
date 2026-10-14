@@ -55,6 +55,7 @@ export default function Ask({ params = {} }) {
   const [approval, setApproval] = useState(null);
   const [reused, setReused] = useState(null); // set when the answer is a saved one
   const [error, setError] = useState("");
+  const [traceId, setTraceId] = useState(null); // the saved run behind what is shown, for sending it elsewhere
   const controller = useRef(null);
   const box = useRef(null);
 
@@ -78,6 +79,7 @@ export default function Ask({ params = {} }) {
     setError("");
     setApproval(null);
     setReused(null);
+    setTraceId(null);
     setShown({ question: nextQuestion, steps: [], done: null, label });
   }
 
@@ -86,6 +88,7 @@ export default function Ask({ params = {} }) {
     try {
       const trace = await getJSON(`/api/traces/${id}`);
       reset(trace.question, trace.label || "");
+      setTraceId(trace.id);
       setShown((s) => ({
         ...s,
         steps: trace.events.filter((e) => e.type === "step"),
@@ -103,7 +106,11 @@ export default function Ask({ params = {} }) {
     const onEvent = (ev) => {
       if (ev.type === "step") setShown((s) => ({ ...s, steps: [...s.steps, ev] }));
       if (ev.type === "approval") setApproval(ev);
-      if (ev.type === "reused") setReused(ev);
+      if (ev.type === "reused") {
+        setReused(ev);
+        setTraceId(ev.trace_id);
+      }
+      if (ev.type === "saved") setTraceId(ev.id);
       if (ev.type === "done") setShown((s) => ({ ...s, done: ev }));
       if (ev.type === "saved" || ev.type === "approval" || (ev.type === "done" && ev.reused)) {
         window.dispatchEvent(new Event("analyst:question-finished"));
@@ -198,6 +205,7 @@ export default function Ask({ params = {} }) {
             reused={reused}
             onAskAgain={() => run(shown.question, true)}
             labels={labels}
+            traceId={traceId}
           />
           <section aria-label="How this answer was built" className="self-start rounded-xl border border-rule bg-surface/70 p-5">
             <h3 className="mb-4 font-semibold">How this answer was built</h3>

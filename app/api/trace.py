@@ -88,12 +88,16 @@ async def stream_trace(graph: Any, question: str, *, thread_id: str | None = Non
 
 
 def save_trace(question: str, events: list[dict], directory: Path = TRACES_DIR, label: str = "",
-               prefix: str = "") -> str:
-    """Store a finished run so the console can replay it without calling the model."""
+               prefix: str = "", owner: str = "") -> str:
+    """Store a finished run so the console can replay it without calling the model.
+
+    `owner` is who asked: only they (and admins, for runs saved before owners were recorded) can open it.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:48]
     trace_id = f"{prefix}{stamp}-{slug}"
-    payload = {"id": trace_id, "question": question, "label": label, "created": stamp, "events": events}
+    payload = {"id": trace_id, "question": question, "label": label, "created": stamp, "owner": owner,
+               "events": events}
     (directory / f"{trace_id}.json").write_text(json.dumps(payload, indent=1), encoding="utf-8")
     return trace_id

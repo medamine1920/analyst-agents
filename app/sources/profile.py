@@ -17,7 +17,10 @@ TIME_TYPES = ("DATE", "TIMESTAMP", "DATETIME")
 TEXT_TYPES = ("VARCHAR", "TEXT", "STRING", "CHAR", "BOOLEAN", "ENUM", "UUID")
 MAX_GROUP_VALUES = 500   # a text column with more distinct values is an identifier, not a breakdown
 MAX_METRICS = 80         # per source: past this the catalog stops being browsable
-LOADED_ON = "loaded_on"  # a date added to tables that have none: MetricFlow needs one per table
+LOADED_ON = "loaded_on"
+# Names MetricFlow keeps for itself (time grains and its own time axis); a column called "day" is common.
+RESERVED = {"nanosecond", "microsecond", "millisecond", "second", "minute", "hour", "day", "week", "month",
+            "quarter", "year", "metric_time"}  # a date added to tables that have none: MetricFlow needs one per table
 
 
 @dataclass
@@ -45,6 +48,8 @@ def identifier(text: str, used: set[str] | None = None) -> str:
     name = name or "table"
     if name[0].isdigit():
         name = f"t_{name}"
+    if name in RESERVED:  # MetricFlow refuses these as names: a column called "day" becomes "day_data"
+        name = f"{name}_data"
     base, index = name, 2
     while used is not None and name in used:
         name, index = f"{base}_{index}", index + 1

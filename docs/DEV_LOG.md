@@ -157,6 +157,26 @@ without the shop's examples, skipped a "month by month" breakdown until a generi
 and a run whose caller disconnected stayed "running" in the log forever (now "stopped"). The test
 client cannot simulate a dropped connection, so that fix was checked against a real server.
 
+## 2026-10-15: a workspace for analysts, and connectors to their tools
+
+The console was reorganized around how analysts work: one Ask page (options under the question box,
+suggestions only once typing starts, earlier runs open in place), projects that group questions and
+remember their data source, and a Settings page that holds everything that is not analysis (profile,
+security, API keys, usage, and admin-only people and developer pages; evaluations moved there and
+became admin-only on the server). Security gained two-step sign-in with an authenticator app and
+one-use recovery codes, a list of sessions that can be signed out remotely, 90 days of account
+activity, refusal of weak or name-based passwords, expiring API keys, and protective headers.
+Charts moved to Apache ECharts (zoom, image export), loaded only when a chart is shown.
+
+Connectors to outside tools share one safe HTTP layer (public addresses only, re-checked after every
+redirect; timeouts; retries; size limits) and one encrypted credential store. Imports from a link,
+any MCP server, Google, Airtable, Notion or HubSpot become data sources; answers go out as Excel or to
+Slack, Teams, a new Google Sheet or an MCP tool. Found on the way: saved runs were readable by any
+signed-in user who knew the id, which mattered once data could be private (now each run records its
+owner); a CSV column called "day" failed to build because MetricFlow reserves time-grain names; a real
+file whose headers were years (1958, 1959) had its header taken for data. Each was reproduced as a
+test first.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that
@@ -195,3 +215,14 @@ console then work unchanged, because to them a user's source looks exactly like 
 Two prototypes settled it before any product code: a CSV queried through the existing semantic
 layer class, and an attached database whose new row appeared in the next answer with no rebuild.
 *Shows: reducing several integrations to one abstraction, and proving the risky part before building around it.*
+
+## Interview story 44: the privacy hole that only appeared with a feature
+
+Saved runs had always been readable by any signed-in user who knew a run's id. With one shared demo
+dataset that was harmless, so nobody had questioned it. The day users could upload their own data, the
+same route became a leak: an answer about someone's private spreadsheet could be opened by a colleague
+who guessed its id, which is a timestamp and the question's first words. It surfaced while wiring the
+export feature, which reads saved runs. Each run now records who asked it; it is visible to that
+person, to someone who was shown it as a saved answer, and (for runs saved before owners existed)
+to admins only. The rule was tested from the other user's side, not just the owner's.
+*Shows: re-checking old assumptions when a new feature changes what data means, and testing access control from the outsider's side.*

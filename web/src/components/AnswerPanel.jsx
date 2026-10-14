@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 
 import { formatNumber } from "../lib/format";
 import { Ident } from "./bits";
+import ExportMenu from "./ExportMenu";
 import ResultTabs from "./ResultTabs";
 
 function finalAnswer(steps, done) {
@@ -118,7 +119,7 @@ function RunFacts({ done }) {
 }
 
 /** The question, then the answer with the numbers and a chart behind it, and what it cost. */
-export default function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain, labels = {} }) {
+export default function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain, labels = {}, traceId = null }) {
   const answer = finalAnswer(steps, done);
   return (
     <section aria-label="Answer" className="space-y-4">
@@ -141,6 +142,7 @@ export default function AnswerPanel({ question, steps, done, label, running, app
           {reused ? <span className="text-sm text-muted">Replayed from the saved run.</span> : <RunFacts done={done} />}
           <div className="flex gap-2">
             {answer && <CopyButton text={answer} />}
+            {answer && <ExportMenu question={question} steps={steps} traceId={traceId} />}
             {onAskAgain && !reused && (
               <button type="button" onClick={onAskAgain} className="rounded-md border border-rule px-2.5 py-1 text-sm hover:border-ink">
                 Ask again

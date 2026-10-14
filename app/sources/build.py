@@ -64,7 +64,7 @@ def open_workspace(folder: Path, spec: dict) -> tuple[duckdb.DuckDBPyConnection,
         for file in spec["files"]:
             name = identifier(file, used)
             path = (folder / "files" / file).as_posix()
-            con.execute(f"create table raw.{name} as select * from read_csv_auto('{path}')")
+            con.execute(f"create table raw.{name} as select * from read_csv_auto('{path}', header = true)")
             tables.append((f"raw.{name}", file.rsplit(".", 1)[0]))
         return con, tables
     attach = spec["attach"]

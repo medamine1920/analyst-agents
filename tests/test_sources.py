@@ -170,3 +170,23 @@ def test_a_database_file_is_queried_read_only_and_bad_uploads_are_refused(two_us
     private = client.post("/api/sources/connection", json={"name": "Inside", "kind": "postgres", "host": "127.0.0.1",
                                                            "database": "x", "user": "y", "password": "z"})
     assert private.status_code == 422 and "private network" in private.json()["detail"]
+
+
+def test_names_metricflow_keeps_for_itself_are_renamed():
+    """Reproduces a CSV with a 'day' column failing to build: MetricFlow refuses time-grain names."""
+    assert identifier("day") == "day_data" and identifier("Year") == "year_data"
+    assert identifier("month.csv") == "month_data" and identifier("daily") == "daily"
+
+
+@pytest.mark.integration
+def test_a_csv_whose_headers_look_like_numbers_keeps_them(tmp_path):
+    """Reproduces a real import: headers 1958, 1959 were taken for data and the columns became column1, column2."""
+    import subprocess
+    import sys
+
+    (tmp_path / "files").mkdir()
+    (tmp_path / "files" / "air.csv").write_text('"Month","1958","1959"\n"JAN",340,360\n"FEB",318,342\n', encoding="utf-8")
+    (tmp_path / "source.json").write_text(json.dumps({"id": "air", "name": "Air", "kind": "csv", "files": ["air.csv"]}))
+    subprocess.run([sys.executable, "-m", "app.sources.build", str(tmp_path)], check=True, capture_output=True)
+    semantic = (tmp_path / "models" / "semantic.yml").read_text(encoding="utf-8")
+    assert "air_t_1958_total" in semantic and "column1" not in semantic

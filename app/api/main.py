@@ -40,6 +40,7 @@ from app.agents.orchestrated.graph import (
 )
 from app.agents.orchestrated.plan import ALL_DEFINITIONS
 from app.api.answers import AnswerStore, data_version, suggest
+from app.api.connector_routes import add_connector_routes
 from app.api.connectors import REQUEST_USER, build_mcp_app, result_from_events
 from app.api.projects import ProjectStore
 from app.api.security import (
@@ -52,6 +53,7 @@ from app.api.security import (
 )
 from app.api.sources_routes import add_source_routes
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
+from app.connectors.store import ConnectionStore
 from app.sources.runtime import SourceRuntime
 from app.sources.store import SAMPLE, SourceStore
 
@@ -163,6 +165,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     answers = AnswerStore(store.path)  # same database file: it is the volume that survives deploys
     sources = SourceStore(store.path, sources_dir)
     projects = ProjectStore(store.path)
+    connections = ConnectionStore(store.path)
     runtime = SourceRuntime(sources)
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
     live_dir = Path(live_traces_dir or os.environ.get("LIVE_TRACES_DIR") or traces_dir)
@@ -502,7 +505,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 if question_id:
                     store.finish_question(question_id, "waiting", spent(last))
             elif last["type"] == "done":
-                trace_id = save_trace(question, collected, live_dir, label=trace_label)
+                trace_id = save_trace(question, collected, live_dir, label=trace_label, owner=user)
                 paused_file.unlink(missing_ok=True)
                 await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
                 if question_id:
@@ -644,21 +647,40 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return [{k: r.get(k) for k in keep} for r in sorted(load_records(path), key=lambda r: r["repeat"])
                 if r["id"] == question_id]
 
-    @app.get("/api/traces")
-    async def traces() -> list[dict]:
-        found = []
-        for path in sorted((p for d in trace_dirs for p in d.glob("*.json")), key=lambda p: p.name, reverse=True):
-            data = json.loads(path.read_text(encoding="utf-8"))
-            found.append({k: data.get(k) for k in ("id", "question", "label", "created")})
-        return found
+    def may_open(user: str, data: dict) -> bool:
+        """Demo runs are public; a live run belongs to whoever asked it (or was shown it as a saved answer).
+        Runs saved before owners were recorded are visible to admins only."""
+        if data.get("label") or not auth:
+            return True
+        owner = data.get("owner")
+        if owner:
+            return owner == user or store.has_trace(user, data.get("id", ""))
+        account = store.account(user)
+        return bool(account and account["role"] == "admin")
 
-    @app.get("/api/traces/{trace_id}")
-    async def trace(trace_id: str) -> dict:
+    def read_trace(user: str, trace_id: str) -> dict:
         for folder in trace_dirs:
             path = folder / f"{trace_id}.json"
             if path.parent == folder and path.exists():
-                return json.loads(path.read_text(encoding="utf-8"))
-        raise HTTPException(404, "No saved run with that id.")
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if may_open(user, data):
+                    return data
+        raise HTTPException(404, "No saved run with that id.")  # the same answer for "not yours" and "missing"
+
+    @app.get("/api/traces")
+    async def traces(request: Request) -> list[dict]:
+        found = []
+        for path in sorted((p for d in trace_dirs for p in d.glob("*.json")), key=lambda p: p.name, reverse=True):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if may_open(request.state.user, data):
+                found.append({k: data.get(k) for k in ("id", "question", "label", "created")})
+        return found
+
+    @app.get("/api/traces/{trace_id}")
+    async def trace(trace_id: str, request: Request) -> dict:
+        return read_trace(request.state.user, trace_id)
+
+    add_connector_routes(app, connections, sources, runtime, lambda trace_id: read_trace(REQUEST_USER.get(), trace_id))
 
     @app.post("/api/ask")
     async def ask(request: AskRequest, http: Request) -> StreamingResponse:
@@ -675,7 +697,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return streamed(events)
 
     @app.post("/api/resume")
-    async def resume(request: ResumeRequest) -> StreamingResponse:
+    async def resume(request: ResumeRequest, http: Request) -> StreamingResponse:
         try:
             store.check_budget(limits)  # the rest of a paused run still spends tokens
         except LimitReached as exc:
@@ -695,7 +717,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         stream = stream_trace(graph(), "", thread_id=request.thread_id, resume=request.choice,
                               elapsed_before=earlier[-1]["elapsed_s"] if earlier else 0.0)
         return streamed(run_events(snapshot.values["question"], request.thread_id, stream, earlier,
-                                   store.question_for_thread(request.thread_id)))
+                                   store.question_for_thread(request.thread_id), user=http.state.user))
 
     if WEB_DIST.exists():  # production: the built console is served by the same process
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

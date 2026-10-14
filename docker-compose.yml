@@ -29,6 +29,14 @@ services:
       # Optional: a passphrase for encrypting database passwords. Without it a key file is created in
       # the volume on first use.
       SOURCES_SECRET: ${SOURCES_SECRET:-}
+      # Optional: a passphrase for the console's other secrets (connector tokens, two-step sign-in keys);
+      # without it a key file is created in the volume.
+      CONSOLE_SECRET: ${CONSOLE_SECRET:-}
+      CONSOLE_KEY_FILE: /srv/checkpoints/.console_key
+      # Google Sheets & Drive connector (see docs/connectors.md); without these the card stays inactive.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      CONSOLE_URL: ${CONSOLE_URL:-https://analyst.medamine.work}
     volumes:
       - console-checkpoints:/srv/checkpoints
     networks:

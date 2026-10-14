@@ -359,3 +359,43 @@ test("the sidebar creates a project and lists recent questions", async () => {
   expect(await screen.findByRole("link", { name: /Q3 review/ })).toBeTruthy();
   expect(window.location.hash).toBe("#ask?project=abcdef1234");
 });
+
+test("connections: tokens are typed into hidden fields, then only a masked hint is listed", async () => {
+  const { default: Connections } = await import("../views/Connections");
+  const catalog = {
+    kinds: [
+      { kind: "link", label: "File from a link", description: "", fields: [], imports: true, exports: false },
+      { kind: "airtable", label: "Airtable", description: "Import the tables of an Airtable base.", imports: true, exports: false,
+        fields: [{ key: "base_id", label: "Base id", secret: false, required: true }, { key: "token", label: "Personal access token", secret: true, required: true }] },
+      { kind: "google", label: "Google Sheets & Drive", description: "", fields: [], imports: true, exports: true, oauth: true, available: false },
+    ],
+    not_possible: { linkedin: "LinkedIn does not offer a data API to apps like this one." },
+  };
+  let connections = [];
+  const posts = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (url === "/api/connectors/catalog") return { ok: true, json: async () => catalog };
+    if (url === "/api/connectors" && options?.method === "POST") {
+      posts.push(JSON.parse(options.body));
+      connections = [{ id: "c1", kind: "airtable", name: "CRM", hint: "token: patS…90", created_at: 1, last_used_at: null }];
+      return { ok: true, json: async () => connections[0] };
+    }
+    return { ok: true, json: async () => connections };
+  });
+  render(<Connections />);
+  expect(await screen.findByText(/LinkedIn does not offer a data API/)).toBeTruthy();
+  const card = screen.getByText("Import the tables of an Airtable base.").closest("li");
+  fireEvent.click(within(card).getByRole("button", { name: "Connect" }));
+  const token = within(card).getByLabelText(/Personal access token/);
+  expect(token.getAttribute("type")).toBe("password");
+  fireEvent.change(within(card).getByLabelText(/Base id/), { target: { value: "app1" } });
+  fireEvent.change(token, { target: { value: "patSECRET1234567890" } });
+  fireEvent.click(within(card).getByRole("button", { name: "Connect" }));
+  expect(await screen.findByText(/token: patS…90/)).toBeTruthy();
+  expect(posts[0]).toEqual({ kind: "airtable", name: "Airtable", values: { base_id: "app1", token: "patSECRET1234567890" } });
+  expect(document.body.textContent).not.toContain("patSECRET1234567890");
+  const googleCard = screen.getByText("Google Sheets & Drive", { selector: "p" }).closest("li");
+  fireEvent.click(within(googleCard).getByRole("button", { name: "Connect" }));
+  expect(within(googleCard).getByText(/Not set up on this console yet/)).toBeTruthy();
+  expect(within(googleCard).getByRole("button", { name: "Sign in with Google" }).disabled).toBe(true);
+});

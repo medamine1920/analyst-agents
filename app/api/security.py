@@ -487,6 +487,12 @@ class SecurityStore:
                               (source, user, limit) if user else (source, limit))
             return [row["question"] for row in rows]
 
+    def has_trace(self, user: str, trace_id: str) -> bool:
+        """Whether this user asked a question answered by that run (their own, or a saved answer shown to them)."""
+        with self._db() as db:
+            return db.execute("select 1 from questions where user_name = ? and trace_id = ? limit 1",
+                              (user, trace_id)).fetchone() is not None
+
     def question_for_thread(self, thread_id: str) -> int | None:
         with self._db() as db:
             row = db.execute("select id from questions where thread_id = ? order by id desc limit 1",

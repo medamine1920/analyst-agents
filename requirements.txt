@@ -8,3 +8,4 @@ langchain-groq
 pyyaml
 fastapi
 uvicorn[standard]
+openpyxl>=3.1,<4

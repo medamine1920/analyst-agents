@@ -5,6 +5,7 @@ import { getJSON, postJSON } from "./lib/api";
 import { linkTo, parseHash } from "./lib/route";
 import { PasswordForm } from "./views/Account";
 import Ask from "./views/Ask";
+import Connections from "./views/Connections";
 import History from "./views/History";
 import Metrics from "./views/Metrics";
 import Settings from "./views/Settings";
@@ -16,6 +17,7 @@ const VIEWS = {
   history: { title: "All questions", hint: "Everything you asked, with what each answer cost", component: History },
   metrics: { title: "Metrics", hint: "What the agent can measure, and how each metric is defined", component: Metrics },
   sources: { title: "Data sources", hint: "Upload files or connect a database, then ask about it", component: Sources },
+  connections: { title: "Connections", hint: "Bring data in from the tools you use, and send results out", component: Connections },
   settings: { title: "Settings", component: Settings },
 };
 // Old addresses keep working: they now live under Settings.

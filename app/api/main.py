@@ -8,6 +8,9 @@ kept on disk (LangGraph checkpoints plus the steps streamed so far), so they sur
 
 Every route except /api/health and sign-in needs a signed-in user (see security.py); CONSOLE_AUTH=off
 turns that off for local development. Live questions also stop when the day's token budget is spent.
+
+Other applications connect with an API key (see connectors.py): POST /api/v1/ask for one JSON
+result, or the MCP endpoint /mcp. A key acts as its owner but cannot create or revoke keys.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from mcp import Client
 from pydantic import BaseModel, Field
+from starlette.routing import Route
 
 from app.agents.mcp_tools import default_target
 from app.agents.orchestrated.gateway import McpGateway
@@ -36,6 +40,7 @@ from app.agents.orchestrated.graph import (
 )
 from app.agents.orchestrated.plan import ALL_DEFINITIONS
 from app.api.answers import AnswerStore, data_version, suggest
+from app.api.connectors import REQUEST_USER, build_mcp_app, result_from_events
 from app.api.security import (
     SESSION_COOKIE,
     SESSION_HOURS,
@@ -57,6 +62,15 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     interactive: bool = Field(default=False, description="Pause and ask when a business term is ambiguous")
     fresh: bool = Field(default=False, description="Run the agent even if a saved answer exists")
+
+
+class ConnectorAskRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+    fresh: bool = Field(default=False, description="Run the agent even if a saved answer exists")
+
+
+class KeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80, description="What the key is for, e.g. 'Sales sheet'")
 
 
 class SignInRequest(BaseModel):
@@ -95,7 +109,10 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with Client(mcp_target or default_target()) as client, open_checkpointer(checkpoint_db) as saver:
+        # The MCP endpoint's session manager runs once per instance, so each start builds a new one.
+        state["mcp_http"] = mcp_http = build_mcp_app(answer_once, catalog)
+        async with (Client(mcp_target or default_target()) as client, open_checkpointer(checkpoint_db) as saver,
+                    mcp_http.router.lifespan_context(mcp_http)):
             state["gateway"], state["checkpointer"] = McpGateway(client), saver
             yield
 
@@ -103,11 +120,33 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @app.middleware("http")
     async def require_sign_in(request: Request, call_next):
-        """Every API route needs a signed-in user, so a new route cannot be left open by accident."""
-        request.state.user = "local" if not auth else store.user_for(request.cookies.get(SESSION_COOKIE))
-        if request.url.path.startswith("/api/") and request.url.path not in OPEN_PATHS and not request.state.user:
+        """Every API route needs a signed-in user or an API key, so a new route cannot be left open.
+
+        Browsers sign in with the session cookie. Other applications send an API key as a Bearer token;
+        /mcp accepts only keys.
+        """
+        path = request.url.path
+        header = request.headers.get("authorization", "")
+        key = header[7:].strip() if header.lower().startswith("bearer ") else None
+        key_user = store.user_for_key(key) if key and auth else None
+        if key and auth and not key_user:
+            return JSONResponse({"detail": "That API key is not valid. It may have been revoked."}, status_code=401)
+        if not auth:
+            user, via = "local", "local"
+        elif key_user:
+            user, via = key_user, "key"
+        else:
+            user, via = store.user_for(request.cookies.get(SESSION_COOKIE)), "session"
+        request.state.user, request.state.via = user, via
+        if path == "/mcp" and auth and via != "key":
+            return JSONResponse({"detail": "Send an API key as 'Authorization: Bearer ak_...'."}, status_code=401)
+        if path.startswith("/api/") and path not in OPEN_PATHS and not user:
             return JSONResponse({"detail": "Sign in to use the console."}, status_code=401)
-        return await call_next(request)
+        token = REQUEST_USER.set(user)
+        try:
+            return await call_next(request)
+        finally:
+            REQUEST_USER.reset(token)
 
     @app.post("/api/auth/login")
     async def sign_in(body: SignInRequest, request: Request, response: Response) -> dict:
@@ -166,40 +205,119 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         usage = event.get("usage") or {}
         return usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
-    def respond(question: str, thread_id: str, stream, earlier: list[dict], question_id: int | None,
-                interactive: bool = True) -> StreamingResponse:
-        """Stream a run. When it pauses, keep its steps; when it finishes, save the whole trace.
+    async def run_events(question: str, thread_id: str, stream, earlier: list[dict], question_id: int | None,
+                         interactive: bool = True):
+        """Follow a run. When it pauses, keep its steps; when it finishes, save the whole trace.
 
         The audit log follows the run: waiting, answered or failed, with the tokens it spent.
         """
-        async def events():
-            collected = list(earlier)
-            paused_file = paused_dir / f"{thread_id}.json"
-            try:
-                async with live_runs:
-                    async for event in stream:
-                        collected.append(event)
-                        yield sse(event)
-                last = collected[-1]
-                if last["type"] == "approval":
-                    paused_dir.mkdir(parents=True, exist_ok=True)
-                    paused_file.write_text(json.dumps({"question": question, "events": collected}), encoding="utf-8")
-                    if question_id:
-                        store.finish_question(question_id, "waiting", spent(last))
-                elif last["type"] == "done":
-                    trace_id = save_trace(question, collected, live_dir, label=trace_label)
-                    paused_file.unlink(missing_ok=True)
-                    await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
-                    if question_id:
-                        store.finish_question(question_id, "answered", spent(last), trace_id)
-                    answers.save(question, interactive, await current_data_version(), collected, trace_id)
-                    yield sse({"type": "saved", "id": trace_id})
-            except Exception as exc:  # noqa: BLE001 - report any failure to the console, never hang the stream
+        collected = list(earlier)
+        paused_file = paused_dir / f"{thread_id}.json"
+        try:
+            async with live_runs:
+                async for event in stream:
+                    collected.append(event)
+                    yield event
+            last = collected[-1]
+            if last["type"] == "approval":
+                paused_dir.mkdir(parents=True, exist_ok=True)
+                paused_file.write_text(json.dumps({"question": question, "events": collected}), encoding="utf-8")
                 if question_id:
-                    store.finish_question(question_id, "failed")
-                yield sse({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+                    store.finish_question(question_id, "waiting", spent(last))
+            elif last["type"] == "done":
+                trace_id = save_trace(question, collected, live_dir, label=trace_label)
+                paused_file.unlink(missing_ok=True)
+                await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
+                if question_id:
+                    store.finish_question(question_id, "answered", spent(last), trace_id)
+                answers.save(question, interactive, await current_data_version(), collected, trace_id)
+                yield {"type": "saved", "id": trace_id}
+        except Exception as exc:  # noqa: BLE001 - report any failure to the caller, never hang
+            if question_id:
+                store.finish_question(question_id, "failed")
+            yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
 
-        return StreamingResponse(events(), media_type="text/event-stream")
+    async def saved_events(saved: dict):
+        """A saved run, replayed like a live one and saying where it came from. No model call, no tokens."""
+        note = {"type": "reused", "saved_at": saved["saved_at"], "trace_id": saved["trace_id"],
+                "question": saved["question"]}
+        for event in saved["events"]:
+            if event["type"] == "done":
+                yield note
+                event = {**event, "reused": True}
+            yield event
+
+    async def ask_events(user: str, question: str, interactive: bool, fresh: bool):
+        """The saved answer, or a new logged run. Raises LimitReached before anything is spent.
+
+        Not a generator itself, so the limit check happens when it is called, not when it is read.
+        """
+        if not fresh:
+            saved = answers.find(question, interactive, await current_data_version())
+            if saved:
+                store.log_reused(user, question, saved["trace_id"])
+                return saved_events(saved)
+        thread_id = uuid.uuid4().hex
+        question_id = store.start_question(user, question, limits, thread_id)
+        stream = stream_trace(graph(), question, thread_id=thread_id, interactive=interactive)
+        return run_events(question, thread_id, stream, [], question_id, interactive)
+
+    def streamed(events) -> StreamingResponse:
+        async def body():
+            async for event in events:
+                yield sse(event)
+
+        return StreamingResponse(body(), media_type="text/event-stream")
+
+    async def answer_once(user: str, question: str, fresh: bool = False) -> dict:
+        """A whole answer as one JSON result, for connectors (never interactive)."""
+        events = [event async for event in await ask_events(user, question, False, fresh)]
+        return result_from_events(events)
+
+    async def catalog() -> list[dict]:
+        return list((await state["gateway"].context())["catalog"].values())
+
+    class McpEndpoint:
+        """Hands /mcp requests to the MCP app of the current start (an ASGI app, not a request handler)."""
+
+        async def __call__(self, scope, receive, send):
+            await state["mcp_http"](scope, receive, send)
+
+    # A plain route, not a mount: clients POST to /mcp exactly, with no redirect to /mcp/.
+    app.router.routes.append(Route("/mcp", endpoint=McpEndpoint(), methods=["GET", "POST", "DELETE"]))
+
+    def browser_only(request: Request) -> None:
+        if request.state.via == "key":
+            raise HTTPException(403, "API keys cannot manage keys: sign in to the console instead.")
+
+    @app.get("/api/keys")
+    async def list_keys(request: Request) -> list[dict]:
+        browser_only(request)
+        return store.keys(request.state.user)
+
+    @app.post("/api/keys")
+    async def create_key(body: KeyRequest, request: Request) -> dict:
+        """The new key, shown this once: only a hash of it is kept."""
+        browser_only(request)
+        return store.create_key(request.state.user, body.name)
+
+    @app.delete("/api/keys/{prefix}")
+    async def revoke_key(prefix: str, request: Request) -> dict:
+        browser_only(request)
+        if not store.revoke_key(request.state.user, prefix):
+            raise HTTPException(404, "No key of yours starts with that.")
+        return {"revoked": prefix}
+
+    @app.post("/api/v1/ask")
+    async def connector_ask(body: ConnectorAskRequest, request: Request) -> dict:
+        """Ask a question and get the whole answer back as one JSON result."""
+        try:
+            result = await answer_once(request.state.user, body.question, body.fresh)
+        except LimitReached as exc:
+            raise HTTPException(429, str(exc)) from exc
+        if result["error"]:
+            raise HTTPException(502, f"The run stopped: {result['error']}")
+        return {"question": body.question, **result}
 
     @app.get("/api/health")
     async def health() -> dict:
@@ -253,31 +371,11 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @app.post("/api/ask")
     async def ask(request: AskRequest, http: Request) -> StreamingResponse:
-        if not request.fresh:
-            saved = answers.find(request.question, request.interactive, await current_data_version())
-            if saved:
-                store.log_reused(http.state.user, request.question, saved["trace_id"])
-                return replay_saved(saved)
-        thread_id = uuid.uuid4().hex
         try:
-            question_id = store.start_question(http.state.user, request.question, limits, thread_id)
+            events = await ask_events(http.state.user, request.question, request.interactive, request.fresh)
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
-        stream = stream_trace(graph(), request.question, thread_id=thread_id, interactive=request.interactive)
-        return respond(request.question, thread_id, stream, [], question_id, request.interactive)
-
-    def replay_saved(saved: dict) -> StreamingResponse:
-        """Stream a saved run like a live one, saying where it came from. No model call, no tokens."""
-        async def events():
-            note = {"type": "reused", "saved_at": saved["saved_at"], "trace_id": saved["trace_id"],
-                    "question": saved["question"]}
-            for event in saved["events"]:
-                if event["type"] == "done":
-                    yield sse(note)
-                    event = {**event, "reused": True}
-                yield sse(event)
-
-        return StreamingResponse(events(), media_type="text/event-stream")
+        return streamed(events)
 
     @app.post("/api/resume")
     async def resume(request: ResumeRequest) -> StreamingResponse:
@@ -299,8 +397,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         earlier = saved.get("events", [])
         stream = stream_trace(graph(), "", thread_id=request.thread_id, resume=request.choice,
                               elapsed_before=earlier[-1]["elapsed_s"] if earlier else 0.0)
-        return respond(snapshot.values["question"], request.thread_id, stream, earlier,
-                       store.question_for_thread(request.thread_id))
+        return streamed(run_events(snapshot.values["question"], request.thread_id, stream, earlier,
+                                   store.question_for_thread(request.thread_id)))
 
     if WEB_DIST.exists():  # production: the built console is served by the same process
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

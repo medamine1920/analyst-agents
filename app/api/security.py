@@ -8,8 +8,11 @@ Everything is kept in one SQLite file (CONSOLE_DB, default checkpoints/console.s
 volume on the server so it survives deploys). Accounts are created by the operator from the
 command line (python -m app.api.users add <name>); there is no sign-up page.
 
-Stored safely: passwords as scrypt hashes with a random salt, sessions as SHA-256 hashes of the
-cookie value, so a copy of the database file signs nobody in.
+Stored safely: passwords as scrypt hashes with a random salt, sessions and API keys as SHA-256
+hashes, so a copy of the database file signs nobody in.
+
+API keys let other applications (scripts, spreadsheets, MCP clients) act as the user who created
+them: same budget, same limits, same audit log. A key is shown once, when it is created.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = REPO_ROOT / "checkpoints" / "console.sqlite"
 SESSION_COOKIE = "analyst_session"
+API_KEY_PREFIX = "ak_"  # recognisable in logs and secret scanners; the part after it is random
 SESSION_HOURS = 12
 FAILED_LOGINS_ALLOWED = 5  # per user name, within FAILED_LOGIN_WINDOW_S; then wait
 FAILED_LOGIN_WINDOW_S = 15 * 60
@@ -46,6 +50,9 @@ create table if not exists questions (
     tokens integer not null default 0, trace_id text, thread_id text);
 create index if not exists questions_by_day on questions (day);
 create index if not exists questions_by_user on questions (user_name, asked_at);
+create table if not exists api_keys (
+    key_hash text primary key, prefix text not null unique, user_name text not null, name text not null,
+    created_at real not null, last_used_at real);
 """
 
 
@@ -118,6 +125,7 @@ class SecurityStore:
     def remove_user(self, name: str) -> bool:
         with self._db() as db:
             db.execute("delete from sessions where user_name = ?", (name,))
+            db.execute("delete from api_keys where user_name = ?", (name,))
             return db.execute("delete from users where name = ?", (name,)).rowcount > 0
 
     def users(self) -> list[str]:
@@ -158,6 +166,36 @@ class SecurityStore:
         if token:
             with self._db() as db:
                 db.execute("delete from sessions where token_hash = ?", (_token_hash(token),))
+
+    # ---- API keys --------------------------------------------------------------------------
+
+    def create_key(self, user: str, name: str) -> dict:
+        """A new key for `user`. The full key is returned only here; only its hash is stored."""
+        secret = API_KEY_PREFIX + secrets.token_urlsafe(32)
+        prefix = secret[: len(API_KEY_PREFIX) + 8]  # enough to tell keys apart in a list, useless to sign in
+        with self._db() as db:
+            db.execute("insert into api_keys values (?, ?, ?, ?, ?, null)",
+                       (_token_hash(secret), prefix, user, name.strip() or "Unnamed key", time.time()))
+        return {"key": secret, "prefix": prefix, "name": name}
+
+    def user_for_key(self, key: str | None) -> str | None:
+        if not key or not key.startswith(API_KEY_PREFIX):
+            return None
+        with self._db() as db:
+            row = db.execute("select user_name from api_keys where key_hash = ?", (_token_hash(key),)).fetchone()
+            if row:
+                db.execute("update api_keys set last_used_at = ? where key_hash = ?", (time.time(), _token_hash(key)))
+            return row["user_name"] if row else None
+
+    def keys(self, user: str) -> list[dict]:
+        with self._db() as db:
+            rows = db.execute("select prefix, name, created_at, last_used_at from api_keys where user_name = ? "
+                              "order by created_at desc", (user,))
+            return [dict(row) for row in rows]
+
+    def revoke_key(self, user: str, prefix: str) -> bool:
+        with self._db() as db:
+            return db.execute("delete from api_keys where user_name = ? and prefix = ?", (user, prefix)).rowcount > 0
 
     # ---- budget, limits and the audit log ------------------------------------------------
 

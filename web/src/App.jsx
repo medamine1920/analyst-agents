@@ -4,6 +4,7 @@ import { getJSON, postJSON } from "./lib/api";
 import { formatNumber } from "./lib/format";
 import { parseHash } from "./lib/route";
 import Ask from "./views/Ask";
+import Connectors from "./views/Connectors";
 import Evals from "./views/Evals";
 import History from "./views/History";
 import Metrics from "./views/Metrics";
@@ -14,6 +15,7 @@ const VIEWS = [
   { id: "history", label: "History", hint: "Your questions and what they cost", component: History },
   { id: "metrics", label: "Metrics", hint: "The governed metric catalog", component: Metrics },
   { id: "evals", label: "Evaluations", hint: "How often the agent is right", component: Evals },
+  { id: "connectors", label: "Connectors", hint: "Use the analyst from other applications", component: Connectors },
 ];
 
 function currentRoute() {

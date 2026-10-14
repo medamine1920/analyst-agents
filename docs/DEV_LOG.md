@@ -120,6 +120,21 @@ bugs were found by measuring the page instead of looking at it: the answer grid 
 width, so a wide table stretched it to 1,561px in a 727px window; and screen-reader-only header
 labels escaped their scrolling tables and widened the page on phones.
 
+## 2026-10-14: connectors
+
+Other applications can now use the analyst, always through an API key that acts as its owner
+(same budget, hourly limit and history) and cannot create or revoke keys. Two doors: a JSON
+endpoint (`POST /api/v1/ask`) that returns the answer, whether it passed the number check, every
+computed table and its cost, for scripts, spreadsheets and BI tools; and an MCP endpoint (`/mcp`)
+with `ask_analyst` and `list_metrics`, so MCP clients get the checked analyst instead of raw
+metrics. The run pipeline was refactored into one generator shared by the console's stream, the
+JSON endpoint and the MCP tool, so saving, logging, limits and saved answers apply the same way
+everywhere. The MCP endpoint is stateless with JSON responses (every call stands alone, so restarts
+and several workers are fine) and is a plain route rather than a mount, so clients reach `/mcp`
+without a redirect. One surprise: the MCP session manager can only be started once per instance, so
+the endpoint is rebuilt on every application start. Checked end to end over HTTP with the official
+MCP client.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that

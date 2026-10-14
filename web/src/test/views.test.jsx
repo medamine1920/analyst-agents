@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import App from "../App";
 import Ask from "../views/Ask";
+import Connectors from "../views/Connectors";
 import Evals from "../views/Evals";
 import History from "../views/History";
 import Metrics from "../views/Metrics";
@@ -216,4 +217,27 @@ test("history lists your questions with their status in words and links to reope
   expect(screen.getByRole("link", { name: "Open" }).getAttribute("href")).toBe("#ask?trace=t-1");
   expect(screen.getByRole("link", { name: "Ask again" }).getAttribute("href")).toContain("q=How+many+orders");
   expect(screen.getByText(/used 1,200 model tokens/)).toBeTruthy();
+});
+
+test("connectors: a new key is shown once, and the examples use it", async () => {
+  let keys = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (url === "/api/keys" && options?.method === "POST") {
+      const created = { key: "ak_abcdefgh_secret", prefix: "ak_abcdefgh", name: JSON.parse(options.body).name };
+      keys = [{ prefix: created.prefix, name: created.name, created_at: 1791900000, last_used_at: null }];
+      return { ok: true, json: async () => created };
+    }
+    if (url === "/api/keys") return { ok: true, json: async () => keys };
+    return { ok: false, status: 404, json: async () => ({}) };
+  });
+  render(<Connectors />);
+  expect(await screen.findByText(/No keys yet/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("What the key is for"), { target: { value: "Sales sheet" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+  expect(await screen.findByText(/it will not be shown again/)).toBeTruthy();
+  expect(screen.getAllByText(/ak_abcdefgh_secret/).length).toBeGreaterThan(1); // the key box and the examples
+  expect(await screen.findByText("Sales sheet")).toBeTruthy();
+  expect(screen.getByText(/last used never/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "I have stored it" }));
+  expect(screen.queryByText(/ak_abcdefgh_secret/)).toBeNull(); // gone from the page once dismissed
 });

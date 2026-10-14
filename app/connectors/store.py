@@ -11,11 +11,10 @@ import json
 import secrets
 import sqlite3
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from app import crypto
+from app.db import connect
 
 SCHEMA = """
 create table if not exists connections (
@@ -35,15 +34,8 @@ class ConnectionStore:
         with self._db() as db:
             db.executescript(SCHEMA)
 
-    @contextmanager
-    def _db(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+    def _db(self):
+        return connect(self.path)
 
     def add(self, owner: str, kind: str, name: str, settings: dict, secret: dict | None) -> dict:
         connection_id = secrets.token_hex(6)

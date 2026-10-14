@@ -17,8 +17,3 @@ export function compact(value) {
   if (abs >= 1e4) return `${(value / 1e3).toFixed(0)}K`;
   return value.toLocaleString("en-US", { maximumFractionDigits: abs < 10 ? 2 : 0 });
 }
-
-/** Category text that fits a label column: "Philadelphia" stays, long names end in an ellipsis. */
-export function shorten(text, max = 18) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}

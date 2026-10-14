@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
+import random
 import re
 from typing import Literal
 
@@ -79,7 +80,25 @@ def expression_problem(expression: str, names: list[str]) -> str | None:
             return "only numeric constants are allowed"
         if isinstance(node, ast.Name) and node.id not in names:
             return f"'{node.id}' is not a metric of that step (use one of {names})"
+    if is_constant(tree, names):
+        return ("it gives the same value on every row (a calculation works within one row). Differences "
+                "between rows are already computed: <metric>_gap_to_top (below the top group), <metric>_rank "
+                "and <metric>_share_pct; to compare two steps, add a comparison")
     return None
+
+
+def is_constant(tree: ast.Expression, names: list[str]) -> bool:
+    """True for an expression such as a - a or a / a. Safe to evaluate: only arithmetic nodes remain."""
+    code = compile(tree, "<calculation>", "eval")
+    draw = random.Random(7)  # fixed: the same plan always gets the same verdict
+    results = set()
+    for _ in range(3):
+        values = {name: draw.uniform(1, 1000) for name in names}
+        try:
+            results.add(round(eval(code, {"__builtins__": {}}, values), 9))
+        except ZeroDivisionError:
+            return False
+    return len(results) == 1 and any(isinstance(node, ast.Name) for node in ast.walk(tree))
 
 
 def expand_time_names(dimensions: list[str]) -> set[str]:

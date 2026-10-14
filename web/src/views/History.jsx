@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { getJSON } from "../lib/api";
-import { formatNumber } from "../lib/format";
+import { formatNumber, formatWhen } from "../lib/format";
 import { linkTo } from "../lib/route";
 
 // Status is always spelled out: never colour alone.
@@ -13,10 +13,6 @@ const STATUS = {
   stopped: { text: "Stopped: the page was closed", mark: "■", style: "text-muted" },
   failed: { text: "Failed", mark: "!", style: "text-fail" },
 };
-
-function when(seconds) {
-  return new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
 
 /** The signed-in user's recent questions; each finished one reopens with all its steps. */
 export default function History() {
@@ -62,7 +58,7 @@ export default function History() {
               return (
                 <tr key={`${row.asked_at}-${index}`} className="border-t border-rule align-top">
                   <td className="max-w-md px-3 py-2">{row.question}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-muted">{when(row.asked_at)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-muted">{formatWhen(row.asked_at)}</td>
                   <td className={`px-3 py-2 whitespace-nowrap ${status.style}`}>
                     <span aria-hidden className="mr-1">{status.mark}</span>
                     {status.text}

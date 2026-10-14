@@ -20,13 +20,12 @@ import shutil
 import socket
 import sqlite3
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 
 from app.api.security import DEFAULT_DB
+from app.db import connect
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = "sample"  # the governed sample shop, visible to everyone
@@ -94,15 +93,8 @@ class SourceStore:
             db.executescript(SCHEMA)
         self._fernet = Fernet(self._key())
 
-    @contextmanager
-    def _db(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+    def _db(self):
+        return connect(self.path)
 
     def _key(self) -> bytes:
         configured = os.environ.get("SOURCES_SECRET")

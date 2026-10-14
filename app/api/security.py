@@ -25,14 +25,13 @@ import re
 import secrets
 import sqlite3
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app import crypto
 from app.api import twofactor
+from app.db import connect
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = REPO_ROOT / "checkpoints" / "console.sqlite"
@@ -163,16 +162,8 @@ class SecurityStore:
             db.execute("update users set role = 'admin' where name = "
                        "(select name from users order by created_at limit 1)")
 
-    @contextmanager
-    def _db(self) -> Iterator[sqlite3.Connection]:
-        """One short connection per operation: safe from any thread, and nothing stays locked."""
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:  # commits on success, rolls back on error
-                yield db
-        finally:
-            db.close()
+    def _db(self):
+        return connect(self.path)
 
     # ---- accounts ------------------------------------------------------------------------
 
@@ -507,6 +498,18 @@ class SecurityStore:
             row = db.execute("select id from questions where thread_id = ? order by id desc limit 1",
                              (thread_id,)).fetchone()
             return row["id"] if row else None
+
+    def expire_waiting(self, asked_before: float) -> list[str]:
+        """Mark questions paused (waiting for the user's choice) since before `asked_before` as expired.
+
+        Returns their thread ids, so the caller can delete what the paused runs kept.
+        """
+        with self._db() as db:
+            rows = db.execute("select thread_id from questions where status = 'waiting' and asked_at < ?",
+                              (asked_before,)).fetchall()
+            db.execute("update questions set status = 'expired' where status = 'waiting' and asked_at < ?",
+                       (asked_before,))
+        return [row["thread_id"] for row in rows if row["thread_id"]]
 
     def finish_question(self, question_id: int, status: str, tokens: int = 0, trace_id: str | None = None) -> None:
         with self._db() as db:

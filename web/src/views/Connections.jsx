@@ -2,11 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../lib/api";
 import { linkTo } from "../lib/route";
-import AccessKeys from "./Connectors";
-
-function when(seconds) {
-  return seconds ? new Date(seconds * 1000).toLocaleDateString(undefined, { dateStyle: "medium" }) : "never";
-}
+import AccessKeys from "./AccessKeys";
+import { formatWhen } from "../lib/format";
 
 function Badge({ children }) {
   return <span className="rounded-full bg-paper px-2 py-0.5 text-xs text-muted">{children}</span>;
@@ -252,7 +249,7 @@ export default function Connections({ params = {} }) {
                   <div>
                     <p className="font-medium">{c.name}</p>
                     <p className="text-xs text-muted">
-                      {kinds[c.kind]?.label ?? c.kind} · added {when(c.created_at)} · last used {when(c.last_used_at)}
+                      {kinds[c.kind]?.label ?? c.kind} · added {formatWhen(c.created_at, { time: false })} · last used {formatWhen(c.last_used_at, { time: false })}
                       {c.hint ? ` · ${c.hint}` : ""}
                     </p>
                   </div>

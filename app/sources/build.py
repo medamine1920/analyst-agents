@@ -150,12 +150,21 @@ def build(folder: Path) -> dict:
         if not relations:
             return {"ok": False, "error": "No tables were found in this source."}
         used: set[str] = set()
-        tables = [profile(con, relation, label, used) for relation, label in relations]
+        tables, skipped = [], []
+        for relation, label in relations:
+            try:
+                tables.append(profile(con, relation, label, used))
+            except duckdb.Error as exc:  # e.g. a read-only account that may see a table but not read it
+                reason = str(exc).rsplit("ERROR:", 1)[-1].strip()  # the database's own words, not the query
+                skipped.append(f"{label} was skipped: {reason[:200]}")
+        if not tables:
+            return {"ok": False, "error": "None of the tables could be read. " + " ".join(skipped)}
         rows = {}
         if spec["kind"] == "csv":  # counting is cheap for loaded files; live tables are left alone
             rows = {t.name: con.execute(f"select count(*) from {t.relation}").fetchone()[0] for t in tables}
         con.close()
         layer, notes = semantic_layer(tables)
+        notes = skipped + notes
         time_dimensions = layer.pop("time_dimensions")
         write_project(folder, spec, tables, layer)
         problem = run_dbt(folder)

@@ -251,3 +251,16 @@ list, and how the key is sent. A key is checked by the provider before it is sto
 never shown again; questions on it skip the shared free-tier budget but keep the hourly limit, which
 protects the server rather than the quota.
 *Shows: designing seams early so a large feature becomes a small one, and separating whose cost a limit protects.*
+
+## Interview story 47: least privilege is the normal case, not the edge case
+
+The PostgreSQL test used the kind of account a careful company hands out: read-only, and allowed to
+read one table but not its neighbour. The build failed outright with "permission denied", because
+the database lists every table in a schema whether or not you may read it. The first instinct, "tell
+users to grant more", is the wrong one: an analyst tool should work with the least access it is given.
+Each table is now profiled on its own; one that cannot be read is skipped and the source says which
+and why, in the database's own words rather than the internal query. The same run showed the planner
+writing `amount_total - amount_total` for "highest minus lowest", a column of zeros that the writer
+happened to ignore; plans with a calculation that cannot vary are now refused and pointed to the gap
+and rank fields code already computes.
+*Shows: designing for the restricted accounts real companies use, and closing a hole that had not yet caused a wrong answer.*

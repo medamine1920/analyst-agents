@@ -1,12 +1,8 @@
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
-
 import { getJSON, postJSON } from "../../lib/api";
+import { formatWhen } from "../../lib/format";
 import { PasswordForm } from "../Account";
-
-function when(seconds) {
-  return seconds ? new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "unknown";
-}
 
 /** "Firefox on Windows" from a user-agent string, roughly. */
 function device(agent = "") {
@@ -131,7 +127,7 @@ function Sessions() {
               <span>
                 {device(s.user_agent)} {s.current && <span className="text-code">· this browser</span>}
                 <span className="block text-xs text-muted">
-                  {s.ip || "unknown address"} · last active {when(s.last_seen)}
+                  {s.ip || "unknown address"} · last active {formatWhen(s.last_seen, { empty: "unknown" })}
                 </span>
               </span>
               {!s.current && (
@@ -170,7 +166,7 @@ function Activity() {
             <li key={`${e.at}-${i}`} className="flex flex-wrap justify-between gap-2">
               <span className={/failed|wrong/.test(e.kind) ? "text-fail" : ""}>{e.kind}</span>
               <span className="text-xs text-muted">
-                {when(e.at)}
+                {formatWhen(e.at, { empty: "unknown" })}
                 {e.ip ? ` · ${e.ip}` : ""}
                 {e.user_agent ? ` · ${device(e.user_agent)}` : ""}
               </span>

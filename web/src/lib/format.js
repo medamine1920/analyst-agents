@@ -13,6 +13,13 @@ export const STEPS = {
   give_up: { title: "Stop: no valid plan", kind: "code" },
 };
 
+/** A Unix time (seconds) as a local date, with the time unless `time` is false; `empty` when missing. */
+export function formatWhen(seconds, { time = true, empty = "never" } = {}) {
+  if (!seconds) return empty;
+  const options = time ? { dateStyle: "medium", timeStyle: "short" } : { dateStyle: "medium" };
+  return new Date(seconds * 1000).toLocaleString(undefined, options);
+}
+
 export function formatNumber(value) {
   return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }

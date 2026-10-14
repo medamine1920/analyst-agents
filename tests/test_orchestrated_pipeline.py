@@ -249,3 +249,31 @@ async def test_the_top_period_is_broken_down_even_when_the_plan_splits_it_wrongl
     assert "top_period" in state["facts"]["computed_fields"]
     by_store = next(s for s in state["facts"]["steps"] if s["id"] == "by_store")
     assert by_store["period"] == "all dates in the data"  # so 493 cannot pass for one month's number
+
+
+async def test_a_replan_after_a_failed_query_reuses_the_choice_without_asking_again(tmp_path):
+    """The user is asked once per term: when the chosen plan's query fails and the planner tries again,
+    the second plan must get the same definition, with no second pause."""
+
+    class FailsOnce(McpGateway):
+        failed = False
+
+        async def run_step(self, step):
+            if not FailsOnce.failed:
+                FailsOnce.failed = True
+                raise ValueError("the warehouse timed out")
+            return await super().run_step(step)
+
+    with_tax = "Philadelphia had the higher income: 450,969.65, measured as Revenue (with tax)."
+    plans = [(Plan.model_validate(INCOME_PLAN), None, {}), (Plan.model_validate(INCOME_PLAN), None, {})]
+    async with Client(server) as client, open_checkpointer(tmp_path / "c.sqlite") as checkpointer:
+        graph = build_graph(FailsOnce(client), scripted(*plans), scripted((with_tax, {})), checkpointer)
+        config = thread_config("replan")
+        await graph.ainvoke({"question": INCOME_QUESTION, "interactive": True}, config)
+        state = await graph.ainvoke(Command(resume={"income": "revenue_with_tax"}), config)
+        assert pending_approval(await graph.aget_state(config)) is None  # not asked a second time
+
+    assert FailsOnce.failed and state["plan_attempts"] == 2
+    assert state["plan"]["steps"][0]["metrics"] == ["revenue_with_tax"]
+    assert has(state["facts"], 450969.65) and not has(state["facts"], 425467)
+    assert state["answer"] == with_tax

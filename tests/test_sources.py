@@ -197,3 +197,30 @@ def test_a_csv_whose_headers_look_like_numbers_keeps_them(tmp_path):
     subprocess.run([sys.executable, "-m", "app.sources.build", str(tmp_path)], check=True, capture_output=True)
     semantic = (tmp_path / "models" / "semantic.yml").read_text(encoding="utf-8")
     assert "air_t_1958_total" in semantic and "column1" not in semantic
+
+
+def test_a_table_the_account_cannot_read_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """Reproduces a live PostgreSQL build: a read-only user saw a table it had no right to read, and the
+    whole source failed with 'permission denied'. Now that table is skipped with a note."""
+    import duckdb
+
+    from app.sources import build as builder
+
+    (tmp_path / "files").mkdir()
+    (tmp_path / "files" / "orders.csv").write_text("region,amount\nNorth,3\nSouth,4\n", encoding="utf-8")
+    (tmp_path / "files" / "notes.csv").write_text("body\nhello\n", encoding="utf-8")
+    (tmp_path / "source.json").write_text(json.dumps({"id": "p", "name": "P", "kind": "csv",
+                                                      "files": ["orders.csv", "notes.csv"]}))
+    real_profile = builder.profile
+
+    def profile(con, relation, label, used):
+        if label == "notes":
+            raise duckdb.Error('Failed to prepare COPY: ERROR:  permission denied for table notes\n')
+        return real_profile(con, relation, label, used)
+
+    monkeypatch.setattr(builder, "profile", profile)
+    monkeypatch.setattr(builder, "run_dbt", lambda folder: None)
+    result = builder.build(tmp_path)
+    assert result["ok"], result
+    assert [t["name"] for t in result["tables"]] == ["orders"]
+    assert "notes was skipped: permission denied for table notes" in result["notes"]

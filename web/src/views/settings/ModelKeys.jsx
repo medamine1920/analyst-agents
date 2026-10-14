@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../../lib/api";
-
-function when(seconds) {
-  return new Date(seconds * 1000).toLocaleDateString(undefined, { dateStyle: "medium" });
-}
+import { formatWhen } from "../../lib/format";
 
 async function send(method, path, body) {
   const response = await fetch(path, {
@@ -58,7 +55,7 @@ function KeyCard({ entry, onChanged, onError }) {
             {entry.label} {entry.active && <span className="ml-1 rounded-full bg-code-tint px-2 py-0.5 text-xs text-code">In use</span>}
           </p>
           <p className="font-mono text-xs text-muted">
-            {entry.hint} · added {when(entry.created_at)}
+            {entry.hint} · added {formatWhen(entry.created_at, { time: false })}
           </p>
         </div>
         <div className="flex gap-2">

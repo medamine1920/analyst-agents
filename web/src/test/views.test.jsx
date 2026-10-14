@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import App from "../App";
 import Ask from "../views/Ask";
 import Admin from "../views/Admin";
-import Connectors from "../views/Connectors";
+import AccessKeys from "../views/AccessKeys";
 import Evals from "../views/Evals";
 import History from "../views/History";
 import Sources from "../views/Sources";
@@ -233,7 +233,7 @@ test("connectors: a new key is shown once, and the examples use it", async () =>
     if (url === "/api/keys") return { ok: true, json: async () => keys };
     return { ok: false, status: 404, json: async () => ({}) };
   });
-  render(<Connectors />);
+  render(<AccessKeys />);
   expect(await screen.findByText(/No keys yet/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("What the key is for"), { target: { value: "Sales sheet" } });
   fireEvent.click(screen.getByRole("button", { name: "Create key" }));

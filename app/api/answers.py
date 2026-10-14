@@ -19,13 +19,11 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import time
 from collections import Counter
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
+from app.db import connect
 from app.text import normalize
 
 SCHEMA = """
@@ -71,15 +69,8 @@ class AnswerStore:
         with self._db() as db:
             db.executescript(SCHEMA)
 
-    @contextmanager
-    def _db(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+    def _db(self):
+        return connect(self.path)
 
     def save(self, question: str, interactive: bool, version: str, events: list[dict], trace_id: str,
              source: str = "sample") -> bool:

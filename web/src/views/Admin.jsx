@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../lib/api";
-import { formatNumber } from "../lib/format";
-
-function when(seconds) {
-  return seconds ? new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "never";
-}
+import { formatNumber, formatWhen } from "../lib/format";
 
 async function send(path, method) {
   const response = await fetch(path, { method });
@@ -125,7 +121,7 @@ export default function Admin({ session }) {
                         <option value="admin">Admin</option>
                       </select>
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted">{when(account.last_asked)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted">{formatWhen(account.last_asked)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatNumber(account.tokens_today)}</td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <button

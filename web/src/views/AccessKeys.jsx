@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../lib/api";
-
-function when(seconds) {
-  return seconds ? new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "never";
-}
+import { formatWhen } from "../lib/format";
 
 function CodeBlock({ title, text }) {
   const [copied, setCopied] = useState(false);
@@ -66,7 +63,7 @@ function examples(origin, key) {
 }
 
 /** Access keys for other applications (they ask the analyst as you), and how to use them. */
-export default function Connectors() {
+export default function AccessKeys() {
   const [keys, setKeys] = useState(null);
   const [name, setName] = useState("");
   const [days, setDays] = useState("90");
@@ -149,9 +146,9 @@ export default function Connectors() {
                 <div>
                   <p className="font-medium">{key.name}</p>
                   <p className="text-xs text-muted">
-                    <span className="font-mono">{key.prefix}…</span> · created {when(key.created_at)} ·{" "}
-                    {key.expires_at ? (key.expires_at * 1000 < Date.now() ? "expired" : `works until ${when(key.expires_at)}`) : "no end date"} · last used{" "}
-                    {when(key.last_used_at)}
+                    <span className="font-mono">{key.prefix}…</span> · created {formatWhen(key.created_at)} ·{" "}
+                    {key.expires_at ? (key.expires_at * 1000 < Date.now() ? "expired" : `works until ${formatWhen(key.expires_at)}`) : "no end date"} · last used{" "}
+                    {formatWhen(key.last_used_at)}
                   </p>
                 </div>
                 <button type="button" onClick={() => revoke(key.prefix)} className="rounded-md border border-rule px-2.5 py-1 hover:border-fail hover:text-fail">

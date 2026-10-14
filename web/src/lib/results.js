@@ -18,12 +18,12 @@ export function isTimeDimension(name) {
 }
 
 /** The plan the queries actually ran with: the clarify step's version when the user picked a definition. */
-export function latestPlan(steps) {
+function latestPlan(steps) {
   const withPlan = steps.filter((s) => (s.node === "plan" || s.node === "clarify") && s.data?.plan);
   return withPlan.length ? withPlan[withPlan.length - 1].data.plan : null;
 }
 
-export function latestFacts(steps) {
+function latestFacts(steps) {
   const analyzed = steps.filter((s) => s.node === "analyze" || s.node === "analyze_partial");
   return analyzed.length ? analyzed[analyzed.length - 1].data?.facts ?? null : null;
 }

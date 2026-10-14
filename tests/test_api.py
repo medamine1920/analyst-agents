@@ -153,3 +153,23 @@ def test_live_runs_are_saved_apart_from_the_demo_runs_and_both_are_listed(tmp_pa
         assert client.get("/api/traces/demo-1").json()["question"] == "Demo?"
         assert client.get(f"/api/traces/{saved['id']}").status_code == 200
 
+
+
+def test_a_question_left_waiting_for_a_week_expires(client, tmp_path):
+    """Paused runs that are never answered used to stay in checkpoints/ and traces/paused/ for good."""
+    import sqlite3
+    import time
+
+    approval = events_of(client.post("/api/ask", json={"question": "Which store had the higher income?",
+                                                       "interactive": True}))[-1]
+    thread_id = approval["thread_id"]
+    paused = tmp_path / "traces" / "paused" / f"{thread_id}.json"
+    assert paused.exists()
+    with sqlite3.connect(tmp_path / "console.sqlite") as db:  # pretend it was asked eight days ago
+        db.execute("update questions set asked_at = ? where thread_id = ?", (time.time() - 8 * 86400, thread_id))
+
+    with client.restart() as restarted:  # the sweep runs at start
+        assert not paused.exists()
+        assert restarted.get("/api/history").json()[0]["status"] == "expired"
+        late = restarted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_with_tax"})
+        assert late.status_code == 404 and "expired" in late.json()["detail"]

@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -62,6 +64,7 @@ from app.sources.runtime import SourceRuntime
 from app.sources.store import SAMPLE, SourceStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PAUSED_RUN_DAYS = 7  # a question waiting this long for the user's choice is forgotten
 RESULTS_DIR = REPO_ROOT / "evals" / "results"
 WEB_DIST = REPO_ROOT / "web" / "dist"
 # Groq's free tier allows 8K tokens a minute, so a few runs at once already hit the limit: the rest wait.
@@ -200,6 +203,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         async with (Client(mcp_target or default_target()) as client, open_checkpointer(checkpoint_db) as saver,
                     mcp_http.router.lifespan_context(mcp_http)):
             state["gateway"], state["checkpointer"] = McpGateway(client), saver
+            await sweep_once()  # at start, then with the first question after six hours
             try:
                 yield
             finally:
@@ -569,6 +573,28 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             state["source_graphs"][key] = cached = (gateway, built)
         return cached[1]
 
+    async def expire_paused_runs() -> int:
+        """Forget runs that have waited for the user's choice longer than PAUSED_RUN_DAYS (7).
+
+        Their checkpoint and the steps already shown are deleted, and the log says 'expired'.
+        """
+        cutoff = time.time() - float(os.environ.get("PAUSED_RUN_DAYS", PAUSED_RUN_DAYS)) * 86400
+        expired = store.expire_waiting(cutoff)
+        for thread_id in expired:
+            await state["checkpointer"].adelete_thread(thread_id)
+            (paused_dir / f"{thread_id}.json").unlink(missing_ok=True)
+        for leftover in paused_dir.glob("*.json") if paused_dir.exists() else []:
+            if leftover.stat().st_mtime < cutoff:  # e.g. from a run whose log entry is gone
+                leftover.unlink(missing_ok=True)
+        return len(expired)
+
+    async def sweep_once():
+        state["swept_at"] = time.time()
+        try:
+            await expire_paused_runs()
+        except Exception:  # a failed sweep must never stop the console; the next one retries
+            logging.getLogger(__name__).exception("Could not expire paused runs")
+
     def spent(event: dict) -> int:
         usage = event.get("usage") or {}
         return usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
@@ -628,6 +654,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
         Not a generator itself, so the checks happen when it is called, not when it is read.
         """
+        if time.time() - state.get("swept_at", 0) > 6 * 3600:
+            await sweep_once()
         model = model_for(user)
         source_graph = await graph_for(user, source, model)
         if not fresh:
@@ -798,7 +826,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         snapshot = await graph.aget_state(thread_config(request.thread_id))
         waiting = pending_approval(snapshot)
         if waiting is None:
-            raise HTTPException(404, "No paused question with that id. It may already have been answered.")
+            raise HTTPException(404, "No paused question with that id. It may already have been answered, "
+                                     f"or it waited more than {PAUSED_RUN_DAYS} days and expired.")
         for item in waiting["questions"]:
             allowed = [option["metric"] for option in item["options"]] + [ALL_DEFINITIONS]
             value = request.choice.get(item["term"]) if isinstance(request.choice, dict) else request.choice

@@ -211,3 +211,14 @@ def test_breakdowns_are_ranked_in_code_largest_first():
     assert [r["rfam__type"] for r in rows][:5] == ["Gene; miRNA;", "Gene; sRNA;", "Gene; snoRNA;", "Cis-reg;", "Gene; lncRNA;"]
     assert [r["rfam_count_rank"] for r in rows] == [1, 2, 3, 4, 5, 6]
     assert "<metric>_rank" in facts["computed_fields"]
+
+
+def test_a_calculation_that_cannot_vary_is_refused_with_the_right_field_named():
+    """Reproduces a live plan: 'highest minus lowest' written as amount_total - amount_total, a column of zeros."""
+    from app.agents.orchestrated.plan import expression_problem
+
+    problem = expression_problem("amount_total - amount_total", ["amount_total"])
+    assert problem and "same value on every row" in problem and "_gap_to_top" in problem
+    assert expression_problem("amount_total / amount_total", ["amount_total"])
+    assert expression_problem("tax / revenue", ["tax", "revenue"]) is None
+    assert expression_problem("amount_total * 100", ["amount_total"]) is None

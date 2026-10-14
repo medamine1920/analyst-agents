@@ -7,6 +7,7 @@ import Admin from "../views/Admin";
 import Connectors from "../views/Connectors";
 import Evals from "../views/Evals";
 import History from "../views/History";
+import Sources from "../views/Sources";
 import Metrics from "../views/Metrics";
 import metrics from "./metrics.json";
 import trace from "./trace.json";
@@ -288,4 +289,30 @@ test("admins invite people and see the one-time password once", async () => {
   expect(await screen.findByText("has not chosen a password yet")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
   expect(screen.queryByText("Tmp-xyz-123")).toBeNull();
+});
+
+test("data sources: a CSV upload shows as building, then ready with its tables and metrics", async () => {
+  let status = "building";
+  const uploads = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (url === "/api/sources/csv") {
+      uploads.push(options.body);
+      return { ok: true, json: async () => ({ id: "abc", status: "building" }) };
+    }
+    const mine = { id: "abc", name: "Sales 2025", kind: "csv", status, error: null,
+      ...(status === "ready" ? { tables: [{ label: "Sales 2025", rows: 5 }], metrics: 8, notes: [] } : {}) };
+    status = "ready"; // the next poll finds it built
+    return { ok: true, json: async () => [{ id: "sample", name: "Sample coffee shop", kind: "sample", status: "ready" }, mine] };
+  });
+  render(<Sources />);
+  expect(await screen.findByText(/Building: reading the tables/)).toBeTruthy();
+  const file = new File(["a,b\n1,2\n"], "Sales 2025.csv", { type: "text/csv" });
+  fireEvent.change(screen.getByLabelText("CSV files"), { target: { files: [file] } });
+  fireEvent.click(screen.getByRole("button", { name: "Add data source" }));
+  await waitFor(() => expect(uploads.length).toBe(1));
+  expect(uploads[0].get("files").name).toBe("Sales 2025.csv");
+  expect(await screen.findByText(/5 rows/, {}, { timeout: 4000 })).toBeTruthy();
+  expect(screen.getByText(/8 metrics/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "Connect a live database" }));
+  expect(screen.getByText(/never written to/)).toBeTruthy();
 });

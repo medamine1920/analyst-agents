@@ -24,6 +24,11 @@ services:
       MCP_TRANSPORT: stdio
       # Live runs and paused questions are kept in the volume, so history survives a redeploy.
       LIVE_TRACES_DIR: /srv/checkpoints/traces
+      # Users' data sources (uploaded files, generated metrics) live in the volume too.
+      SOURCES_DIR: /srv/checkpoints/sources
+      # Optional: a passphrase for encrypting database passwords. Without it a key file is created in
+      # the volume on first use.
+      SOURCES_SECRET: ${SOURCES_SECRET:-}
     volumes:
       - console-checkpoints:/srv/checkpoints
     networks:

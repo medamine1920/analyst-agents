@@ -11,6 +11,7 @@ import Evals from "./views/Evals";
 import History from "./views/History";
 import Metrics from "./views/Metrics";
 import SignIn from "./views/SignIn";
+import Sources from "./views/Sources";
 
 // Two groups in the sidebar: the work itself, then the settings around it.
 const VIEWS = [
@@ -18,7 +19,8 @@ const VIEWS = [
   { id: "history", label: "History", hint: "Your questions and what they cost", component: History, group: "Analyse" },
   { id: "metrics", label: "Metrics", hint: "The governed metric catalog", component: Metrics, group: "Analyse" },
   { id: "evals", label: "Evaluations", hint: "How often the agent is right", component: Evals, group: "Analyse" },
-  { id: "connectors", label: "Connectors", hint: "Use the analyst from other applications", component: Connectors, group: "Settings" },
+  { id: "sources", label: "Data sources", hint: "Upload files or connect a database", component: Sources, group: "Data" },
+  { id: "connectors", label: "Connectors", hint: "Use the analyst from other applications", component: Connectors, group: "Data" },
   { id: "account", label: "Account", hint: "Your password and your account", component: Account, group: "Settings" },
   { id: "admin", label: "Admin", hint: "Invite people and manage accounts", component: Admin, group: "Settings", admin: true },
 ];

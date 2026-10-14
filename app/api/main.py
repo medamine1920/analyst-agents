@@ -48,7 +48,10 @@ from app.api.security import (
     Limits,
     SecurityStore,
 )
+from app.api.sources_routes import add_source_routes
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
+from app.sources.runtime import SourceRuntime
+from app.sources.store import SAMPLE, SourceStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = REPO_ROOT / "evals" / "results"
@@ -58,14 +61,19 @@ MAX_LIVE_RUNS = int(os.environ.get("MAX_LIVE_RUNS", "2"))
 OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me"}
 
 
+SOURCE_ID = r"^[a-z0-9]{1,40}$"
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
+    source: str = Field(default=SAMPLE, pattern=SOURCE_ID, description="'sample' or one of your data sources")
     interactive: bool = Field(default=False, description="Pause and ask when a business term is ambiguous")
     fresh: bool = Field(default=False, description="Run the agent even if a saved answer exists")
 
 
 class ConnectorAskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
+    source: str = Field(default=SAMPLE, pattern=SOURCE_ID, description="'sample' or one of your data sources")
     fresh: bool = Field(default=False, description="Run the agent even if a saved answer exists")
 
 
@@ -104,7 +112,7 @@ def sse(event: dict) -> str:
 def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir: Path = RESULTS_DIR,
                traces_dir: Path = TRACES_DIR, checkpoint_db: Path | None = None, trace_label: str = "",
                auth: bool | None = None, security_db: Path | None = None, limits: Limits | None = None,
-               live_traces_dir: Path | None = None) -> FastAPI:
+               live_traces_dir: Path | None = None, sources_dir: Path | None = None) -> FastAPI:
     """Build the API. Tests pass an in-process MCP server and scripted planner/writer.
 
     auth=None reads CONSOLE_AUTH: sign-in is required unless it is "off".
@@ -116,6 +124,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     auth = (os.environ.get("CONSOLE_AUTH", "on").lower() != "off") if auth is None else auth
     store, limits = SecurityStore(security_db), limits or Limits.from_env()
     answers = AnswerStore(store.path)  # same database file: it is the volume that survives deploys
+    sources = SourceStore(store.path, sources_dir)
+    runtime = SourceRuntime(sources)
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
     live_dir = Path(live_traces_dir or os.environ.get("LIVE_TRACES_DIR") or traces_dir)
     trace_dirs = list(dict.fromkeys([live_dir, traces_dir]))  # live runs first; the same folder only once
@@ -128,7 +138,10 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         async with (Client(mcp_target or default_target()) as client, open_checkpointer(checkpoint_db) as saver,
                     mcp_http.router.lifespan_context(mcp_http)):
             state["gateway"], state["checkpointer"] = McpGateway(client), saver
-            yield
+            try:
+                yield
+            finally:
+                await runtime.close_all()  # the query processes of users' sources
 
     app = FastAPI(title="Analyst Console API", lifespan=lifespan)
 
@@ -257,16 +270,37 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             raise HTTPException(404, f"No account called '{name}'.")
         return {"removed": name}
 
-    async def current_data_version() -> str:
-        return data_version(await state["gateway"].context())
+    async def gateway_for(user: str, source: str) -> McpGateway:
+        """The sample shop's gateway, or the query process of one of the user's ready sources."""
+        if source == SAMPLE:
+            return state["gateway"]
+        try:
+            found = sources.get(user, source)
+        except KeyError as exc:
+            raise LookupError("No data source of yours has that id.") from exc
+        if found["status"] != "ready":
+            raise LookupError(f"'{found['name']}' is not ready to be asked yet ({found['status']}).")
+        return await runtime.gateway(source)
+
+    async def current_data_version(user: str = "", source: str = SAMPLE) -> str:
+        return data_version(await (await gateway_for(user, source)).context())
+
+    def not_found(exc: LookupError) -> HTTPException:
+        return HTTPException(404 if "No data source" in str(exc) else 409, str(exc))
 
     @app.get("/api/suggestions")
-    async def suggestions(q: str = "") -> dict:
+    async def suggestions(request: Request, q: str = "", source: str = SAMPLE) -> dict:
         """Questions asked before (most asked first) and metrics matching what is being typed."""
-        context, version = await state["gateway"].context(), await current_data_version()
-        found = suggest(q, store.recent_questions(), context["catalog"])
+        user = request.state.user
+        try:
+            context = await (await gateway_for(user, source)).context()
+        except LookupError as exc:
+            raise not_found(exc) from exc
+        version = data_version(context)
+        past = store.recent_questions(source=source, user=None if source == SAMPLE else user)
+        found = suggest(q, past, context["catalog"])
         for item in found["questions"]:
-            item["saved_answer"] = answers.has(item["question"], version)
+            item["saved_answer"] = answers.has(item["question"], version, source)
         return found
 
     @app.get("/api/history")
@@ -274,23 +308,43 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         """The signed-in user's recent questions, newest first."""
         return store.history(request.state.user, limit=50)
 
+    def model():
+        if "model" not in state:
+            from app.agents.orchestrated import graph as orchestrated
+
+            # the real model is only created when a live question is asked
+            state["model"] = (plan_fn, write_fn) if plan_fn and write_fn else orchestrated.model_fns()
+        return state["model"]
+
     def graph():
+        """The sample shop's graph."""
         if "graph" not in state:
             from app.agents.orchestrated import graph as orchestrated
 
-            if plan_fn and write_fn:
-                planner, writer = plan_fn, write_fn
-            else:  # the real model is only created when a live question is asked
-                planner, writer = orchestrated.model_fns()
-            state["graph"] = orchestrated.build_graph(state["gateway"], planner, writer, state["checkpointer"])
+            state["graph"] = orchestrated.build_graph(state["gateway"], *model(), state["checkpointer"])
         return state["graph"]
+
+    async def graph_for(user: str, source: str):
+        """A graph per source, rebuilt whenever the source's query process is (after a rebuild, say)."""
+        if source == SAMPLE:
+            return graph()
+        from app.agents.orchestrated import graph as orchestrated
+
+        gateway = await gateway_for(user, source)
+        cached = state.setdefault("source_graphs", {}).get(source)
+        if not cached or cached[0] is not gateway:
+            name = sources.get(user, source)["name"]
+            built = orchestrated.build_graph(gateway, *model(), state["checkpointer"], use_glossary=False,
+                                             prompts=orchestrated.source_prompts(f"the data source '{name}'"))
+            state["source_graphs"][source] = cached = (gateway, built)
+        return cached[1]
 
     def spent(event: dict) -> int:
         usage = event.get("usage") or {}
         return usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
     async def run_events(question: str, thread_id: str, stream, earlier: list[dict], question_id: int | None,
-                         interactive: bool = True):
+                         interactive: bool = True, user: str = "", source: str = SAMPLE):
         """Follow a run. When it pauses, keep its steps; when it finishes, save the whole trace.
 
         The audit log follows the run: waiting, answered or failed, with the tokens it spent.
@@ -314,8 +368,14 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
                 if question_id:
                     store.finish_question(question_id, "answered", spent(last), trace_id)
-                answers.save(question, interactive, await current_data_version(), collected, trace_id)
+                answers.save(question, interactive, await current_data_version(user, source), collected, trace_id,
+                             source)
                 yield {"type": "saved", "id": trace_id}
+        except (asyncio.CancelledError, GeneratorExit):
+            # The caller went away mid-run (a closed tab, a dropped connection): say so in the log.
+            if question_id:
+                store.finish_question(question_id, "stopped")
+            raise
         except Exception as exc:  # noqa: BLE001 - report any failure to the caller, never hang
             if question_id:
                 store.finish_question(question_id, "failed")
@@ -331,20 +391,22 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 event = {**event, "reused": True}
             yield event
 
-    async def ask_events(user: str, question: str, interactive: bool, fresh: bool):
-        """The saved answer, or a new logged run. Raises LimitReached before anything is spent.
+    async def ask_events(user: str, question: str, interactive: bool, fresh: bool, source: str = SAMPLE):
+        """The saved answer, or a new logged run. Raises LimitReached (or LookupError for a source that is
+        missing or not ready) before anything is spent.
 
-        Not a generator itself, so the limit check happens when it is called, not when it is read.
+        Not a generator itself, so the checks happen when it is called, not when it is read.
         """
+        source_graph = await graph_for(user, source)
         if not fresh:
-            saved = answers.find(question, interactive, await current_data_version())
+            saved = answers.find(question, interactive, await current_data_version(user, source), source)
             if saved:
-                store.log_reused(user, question, saved["trace_id"])
+                store.log_reused(user, question, saved["trace_id"], source)
                 return saved_events(saved)
         thread_id = uuid.uuid4().hex
-        question_id = store.start_question(user, question, limits, thread_id)
-        stream = stream_trace(graph(), question, thread_id=thread_id, interactive=interactive)
-        return run_events(question, thread_id, stream, [], question_id, interactive)
+        question_id = store.start_question(user, question, limits, thread_id, source)
+        stream = stream_trace(source_graph, question, thread_id=thread_id, interactive=interactive)
+        return run_events(question, thread_id, stream, [], question_id, interactive, user, source)
 
     def streamed(events) -> StreamingResponse:
         async def body():
@@ -353,13 +415,13 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
         return StreamingResponse(body(), media_type="text/event-stream")
 
-    async def answer_once(user: str, question: str, fresh: bool = False) -> dict:
+    async def answer_once(user: str, question: str, fresh: bool = False, source: str = SAMPLE) -> dict:
         """A whole answer as one JSON result, for connectors (never interactive)."""
-        events = [event async for event in await ask_events(user, question, False, fresh)]
+        events = [event async for event in await ask_events(user, question, False, fresh, source)]
         return result_from_events(events)
 
-    async def catalog() -> list[dict]:
-        return list((await state["gateway"].context())["catalog"].values())
+    async def catalog(user: str = "", source: str = SAMPLE) -> list[dict]:
+        return list((await (await gateway_for(user, source)).context())["catalog"].values())
 
     class McpEndpoint:
         """Hands /mcp requests to the MCP app of the current start (an ASGI app, not a request handler)."""
@@ -392,9 +454,11 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     async def connector_ask(body: ConnectorAskRequest, request: Request) -> dict:
         """Ask a question and get the whole answer back as one JSON result."""
         try:
-            result = await answer_once(request.state.user, body.question, body.fresh)
+            result = await answer_once(request.state.user, body.question, body.fresh, body.source)
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
+        except LookupError as exc:
+            raise not_found(exc) from exc
         if result["error"]:
             raise HTTPException(502, f"The run stopped: {result['error']}")
         return {"question": body.question, **result}
@@ -404,9 +468,14 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return {"status": "ok"}
 
     @app.get("/api/metrics")
-    async def metrics() -> dict:
-        context = await state["gateway"].context()
+    async def metrics(request: Request, source: str = SAMPLE) -> dict:
+        try:
+            context = await (await gateway_for(request.state.user, source)).context()
+        except LookupError as exc:
+            raise not_found(exc) from exc
         return {"data_range": context["data_range"], "metrics": list(context["catalog"].values())}
+
+    add_source_routes(app, sources, runtime)
 
     @app.get("/api/evals")
     async def evals() -> list[dict]:
@@ -452,9 +521,12 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     @app.post("/api/ask")
     async def ask(request: AskRequest, http: Request) -> StreamingResponse:
         try:
-            events = await ask_events(http.state.user, request.question, request.interactive, request.fresh)
+            events = await ask_events(http.state.user, request.question, request.interactive, request.fresh,
+                                      request.source)
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
+        except LookupError as exc:
+            raise not_found(exc) from exc
         return streamed(events)
 
     @app.post("/api/resume")

@@ -6,17 +6,18 @@ import { getJSON } from "../lib/api";
  * While a question is typed: questions asked before (most asked first, marked when a saved answer
  * exists and will cost nothing) and metrics whose name or definition match.
  */
-export default function Suggestions({ text, onPickQuestion, onPickMetric }) {
+export default function Suggestions({ text, onPickQuestion, onPickMetric, source = "sample" }) {
   const [found, setFound] = useState({ questions: [], metrics: [] });
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      getJSON(`/api/suggestions?q=${encodeURIComponent(text.trim())}`)
+      const scope = source === "sample" ? "" : `&source=${encodeURIComponent(source)}`;
+      getJSON(`/api/suggestions?q=${encodeURIComponent(text.trim())}${scope}`)
         .then((result) => setFound(result ?? { questions: [], metrics: [] }))
         .catch(() => setFound({ questions: [], metrics: [] })); // suggestions are a convenience, never an error
     }, 250);
     return () => clearTimeout(timer);
-  }, [text]);
+  }, [text, source]);
 
   const questions = (found.questions ?? []).filter((q) => q.question.trim() !== text.trim());
   const metrics = found.metrics ?? [];

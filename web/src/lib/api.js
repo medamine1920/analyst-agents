@@ -37,8 +37,9 @@ export async function postJSON(path, body) {
 }
 
 /** POST a question and call onEvent for every streamed step (server-sent events). */
-export function streamAsk(question, interactive, onEvent, signal, fresh = false) {
-  return streamPost("/api/ask", { question, interactive, ...(fresh ? { fresh: true } : {}) }, onEvent, signal);
+export function streamAsk(question, interactive, onEvent, signal, fresh = false, source = "sample") {
+  const body = { question, interactive, ...(fresh ? { fresh: true } : {}), ...(source !== "sample" ? { source } : {}) };
+  return streamPost("/api/ask", body, onEvent, signal);
 }
 
 /** Continue a run that paused to ask which definition was meant. */

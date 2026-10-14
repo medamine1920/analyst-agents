@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import AnswerPanel from "../components/AnswerPanel";
+import SourcePicker, { useSource } from "../components/SourcePicker";
 import Suggestions from "../components/Suggestions";
 import Trace from "../components/Trace";
 import { getJSON, streamAsk, streamResume } from "../lib/api";
@@ -18,6 +19,7 @@ export default function Ask({ params = {} }) {
   const [mode, setMode] = useState(params.mode === "live" || params.q ? "live" : "replay");
   const [question, setQuestion] = useState(params.q ?? "");
   const [labels, setLabels] = useState({}); // metric name -> its everyday label, for charts and tiles
+  const source = useSource();
   const [traces, setTraces] = useState([]);
   const [shown, setShown] = useState({ question: "", steps: [], done: null, label: "" });
   const [running, setRunning] = useState(false);
@@ -32,11 +34,15 @@ export default function Ask({ params = {} }) {
   const loadTraces = () => getJSON("/api/traces").then(setTraces).catch((e) => setError(e.message));
   useEffect(() => {
     loadTraces();
-    getJSON("/api/metrics")
-      .then((data) => setLabels(Object.fromEntries((data?.metrics ?? []).map((m) => [m.name, m.label]))))
-      .catch(() => {}); // labels are a nicety: charts fall back to metric names
     return () => timers.current.forEach(clearTimeout);
   }, []);
+
+  useEffect(() => {
+    const scope = source === "sample" ? "" : `?source=${encodeURIComponent(source)}`;
+    getJSON(`/api/metrics${scope}`)
+      .then((data) => setLabels(Object.fromEntries((data?.metrics ?? []).map((m) => [m.name, m.label]))))
+      .catch(() => {}); // labels are a nicety: charts fall back to metric names
+  }, [source]);
 
   useEffect(() => {
     if (params.q) {
@@ -118,7 +124,7 @@ export default function Ask({ params = {} }) {
     const text = question.trim();
     if (text.length < 3) return;
     reset(text);
-    return follow((onEvent, signal) => streamAsk(text, interactive, onEvent, signal, fresh));
+    return follow((onEvent, signal) => streamAsk(text, interactive, onEvent, signal, fresh, source));
   }
 
   function addMetric(metric) {
@@ -154,8 +160,11 @@ export default function Ask({ params = {} }) {
 
         {mode === "live" ? (
           <form onSubmit={askLive} className="space-y-2">
+            <SourcePicker />
             <label htmlFor="question" className="block text-sm text-muted">
-              Ask about orders, revenue, customers, stores or products (September 2024 to August 2025).
+              {source === "sample"
+                ? "Ask about orders, revenue, customers, stores or products (September 2024 to August 2025)."
+                : "Ask about your data source: its metrics are listed on the Metrics page."}
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
               <textarea
@@ -178,9 +187,9 @@ export default function Ask({ params = {} }) {
               <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} />
               Ask me when a business term has several definitions (otherwise all of them are reported).
             </label>
-            <Suggestions text={question} onPickQuestion={setQuestion} onPickMetric={addMetric} />
+            <Suggestions text={question} onPickQuestion={setQuestion} onPickMetric={addMetric} source={source} />
             <div className="flex flex-wrap gap-2">
-              {EXAMPLES.map((example) => (
+              {(source === "sample" ? EXAMPLES : []).map((example) => (
                 <button
                   key={example}
                   type="button"

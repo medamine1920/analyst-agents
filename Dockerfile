@@ -37,6 +37,9 @@ RUN mkdir -p checkpoints
 RUN useradd --create-home appuser && chown -R appuser /srv
 USER appuser
 
+# DuckDB's readers for live databases and database files, installed now so sources need no download.
+RUN python -c "import duckdb; c = duckdb.connect(); [c.execute(f'install {e}') for e in ('postgres', 'mysql', 'sqlite')]"
+
 ENV MCP_TRANSPORT=streamable-http \
     MCP_HOST=0.0.0.0 \
     MCP_PORT=8000

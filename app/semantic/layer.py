@@ -100,10 +100,23 @@ class SemanticLayer:
         return sorted({dimension.dunder_name for dimension in dimensions})
 
     def data_time_range(self) -> dict[str, str]:
-        """First and last order dates present in the data."""
-        request = MetricFlowQueryRequest.create(group_by_names=["order_id__ordered_at"], min_max_only=True)
-        first, last = self._engine.query(request).result_df.rows[0]
-        return {"first_date": first.date().isoformat(), "last_date": last.date().isoformat()}
+        """First and last dates present in the data.
+
+        Taken over the time dimensions in DATA_TIME_DIMENSIONS (comma-separated; the sample shop's order
+        date by default). A data source a user adds lists the date column of each of its tables.
+        """
+        names = os.environ.get("DATA_TIME_DIMENSIONS", "order_id__ordered_at").split(",")
+        firsts, lasts = [], []
+        for name in filter(None, (n.strip() for n in names)):
+            request = MetricFlowQueryRequest.create(group_by_names=[name], min_max_only=True)
+            first, last = self._engine.query(request).result_df.rows[0]
+            if first is not None and last is not None:
+                firsts.append(first if isinstance(first, dt.date) else dt.date.fromisoformat(str(first)[:10]))
+                lasts.append(last if isinstance(last, dt.date) else dt.date.fromisoformat(str(last)[:10]))
+        if not firsts:
+            raise ValueError("The data has no dates.")
+        day = lambda value: value.date() if isinstance(value, dt.datetime) else value
+        return {"first_date": day(min(firsts)).isoformat(), "last_date": day(max(lasts)).isoformat()}
 
     def query(
         self,

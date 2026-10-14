@@ -135,6 +135,28 @@ without a redirect. One surprise: the MCP session manager can only be started on
 the endpoint is rebuilt on every application start. Checked end to end over HTTP with the official
 MCP client.
 
+## 2026-10-14: accounts, and users' own data
+
+Accounts became invite-only from the console: an Admin page creates accounts with a one-time
+password (the user must choose their own before anything else), resets passwords, changes roles
+and removes accounts; everyone changes their own password.
+
+Users can now add their own data: CSV files, a SQLite or DuckDB file, or a live PostgreSQL or
+MySQL database. The design keeps the project's rule that every number comes from a governed
+semantic layer: each source gets its own DuckDB workspace (CSV files loaded into it, databases
+attached read-only, so live data is read where it is and never written) and a generated dbt +
+MetricFlow project, built in a separate process. A prototype proved both halves first: a CSV
+became a queryable semantic layer in 8 seconds, and a row added to an attached database showed up
+in the next answer without a rebuild. Generated metrics are plain and say how they are computed
+(rows, totals, averages, distinct counts). Each source is private to its owner, live passwords are
+encrypted and passed to processes only through an environment variable, and private network
+addresses are refused. The agent runs on a source without the sample shop's glossary and examples.
+
+Found on the way: the date-range tool was hard-wired to the sample shop's order date; the planner,
+without the shop's examples, skipped a "month by month" breakdown until a generic rule was added;
+and a run whose caller disconnected stayed "running" in the log forever (now "stopped"). The test
+client cannot simulate a dropped connection, so that fix was checked against a real server.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that
@@ -161,3 +183,15 @@ fix went upstream: code now fetches the month-by-store breakdown whenever a plan
 and hands the writer the top month together with its own rows. The eval files also record the plan
 now, because this failure had to be reconstructed from the answer text.
 *Shows: distrust of a perfect score, honest reporting of a result that got worse, and fixing the cause rather than the symptom.*
+
+## Interview story 43: one design for three kinds of data
+
+"Let users add a database" could have meant three integrations: CSV parsing, a Postgres client, a
+MySQL client, each with its own query path, and each bypassing the governed metrics the agent's
+reliability depends on. Instead every source becomes the same thing: a DuckDB workspace with a
+generated dbt and MetricFlow project. CSV files are loaded into it; live databases are attached
+to it read-only, so DuckDB reads them in place. The agent, the checks, saved answers and the
+console then work unchanged, because to them a user's source looks exactly like the sample shop.
+Two prototypes settled it before any product code: a CSV queried through the existing semantic
+layer class, and an attached database whose new row appeared in the next answer with no rebuild.
+*Shows: reducing several integrations to one abstraction, and proving the risky part before building around it.*

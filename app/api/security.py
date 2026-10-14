@@ -118,6 +118,8 @@ class SecurityStore:
             db.execute("alter table users add column role text not null default 'user'")
         if "must_change" not in columns:
             db.execute("alter table users add column must_change integer not null default 0")
+        if "source" not in {row["name"] for row in db.execute("pragma table_info(questions)")}:
+            db.execute("alter table questions add column source text not null default 'sample'")
         if not db.execute("select 1 from users where role = 'admin'").fetchone():
             db.execute("update users set role = 'admin' where name = "
                        "(select name from users order by created_at limit 1)")
@@ -295,7 +297,7 @@ class SecurityStore:
             raise LimitReached(f"Today's budget of {limits.daily_tokens:,} model tokens is used up. "
                                "Live questions start again at midnight UTC; saved runs still replay.")
 
-    def start_question(self, user: str, question: str, limits: Limits, thread_id: str) -> int:
+    def start_question(self, user: str, question: str, limits: Limits, thread_id: str, source: str = "sample") -> int:
         """Check the limits, then log the question. Raises LimitReached before anything is spent."""
         now = time.time()
         self.check_budget(limits)
@@ -305,20 +307,24 @@ class SecurityStore:
             if asked >= limits.questions_per_hour:
                 raise LimitReached(f"You have asked {asked} questions in the last hour, the limit is "
                                    f"{limits.questions_per_hour}. Try again a little later.")
-            return db.execute("insert into questions (user_name, question, asked_at, day, thread_id) "
-                              "values (?, ?, ?, ?, ?)", (user, question, now, today(), thread_id)).lastrowid
+            return db.execute("insert into questions (user_name, question, asked_at, day, thread_id, source) "
+                              "values (?, ?, ?, ?, ?, ?)", (user, question, now, today(), thread_id, source)).lastrowid
 
-    def log_reused(self, user: str, question: str, trace_id: str | None) -> None:
+    def log_reused(self, user: str, question: str, trace_id: str | None, source: str = "sample") -> None:
         """A saved answer was shown again: logged, but it spent nothing and counts against no limit."""
         with self._db() as db:
-            db.execute("insert into questions (user_name, question, asked_at, day, status, trace_id) "
-                       "values (?, ?, ?, ?, 'reused', ?)", (user, question, time.time(), today(), trace_id))
+            db.execute("insert into questions (user_name, question, asked_at, day, status, trace_id, source) "
+                       "values (?, ?, ?, ?, 'reused', ?, ?)", (user, question, time.time(), today(), trace_id, source))
 
-    def recent_questions(self, limit: int = 500) -> list[str]:
-        """Questions that got an answer, newest first, from every user (for suggestions)."""
+    def recent_questions(self, limit: int = 500, source: str = "sample", user: str | None = None) -> list[str]:
+        """Questions that got an answer, newest first, for suggestions.
+
+        The sample shop's come from every user; a private source's only from its owner.
+        """
         with self._db() as db:
-            rows = db.execute("select question from questions where status in ('answered', 'reused') "
-                              "order by asked_at desc limit ?", (limit,))
+            rows = db.execute("select question from questions where status in ('answered', 'reused') and source = ? "
+                              + ("and user_name = ? " if user else "") + "order by asked_at desc limit ?",
+                              (source, user, limit) if user else (source, limit))
             return [row["question"] for row in rows]
 
     def question_for_thread(self, thread_id: str) -> int | None:
@@ -344,7 +350,7 @@ class SecurityStore:
     def history(self, user: str | None = None, limit: int = 50) -> list[dict]:
         with self._db() as db:
             rows = db.execute(
-                "select user_name, question, asked_at, status, tokens, trace_id from questions "
+                "select user_name, question, asked_at, status, tokens, trace_id, source from questions "
                 + ("where user_name = ? " if user else "") + "order by asked_at desc limit ?",
                 (user, limit) if user else (limit,))
             return [dict(row) for row in rows]

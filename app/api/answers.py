@@ -48,8 +48,9 @@ def data_version(context: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def answer_key(question: str, interactive: bool) -> str:
-    return f"{'interactive' if interactive else 'all-definitions'}|{normalized_question(question)}"
+def answer_key(question: str, interactive: bool, source: str = "sample") -> str:
+    key = f"{'interactive' if interactive else 'all-definitions'}|{normalized_question(question)}"
+    return key if source == "sample" else f"{source}|{key}"  # sample keys predate sources: unchanged
 
 
 def reusable(events: list[dict]) -> bool:
@@ -80,30 +81,33 @@ class AnswerStore:
         finally:
             db.close()
 
-    def save(self, question: str, interactive: bool, version: str, events: list[dict], trace_id: str) -> bool:
+    def save(self, question: str, interactive: bool, version: str, events: list[dict], trace_id: str,
+             source: str = "sample") -> bool:
         if not reusable(events):
             return False
         with self._db() as db:
             db.execute("insert or replace into saved_answers (key, question, data_version, saved_at, trace_id, events) "
                        "values (?, ?, ?, ?, ?, ?)",
-                       (answer_key(question, interactive), question, version, time.time(), trace_id, json.dumps(events)))
+                       (answer_key(question, interactive, source), question, version, time.time(), trace_id,
+                        json.dumps(events)))
         return True
 
-    def find(self, question: str, interactive: bool, version: str) -> dict | None:
+    def find(self, question: str, interactive: bool, version: str, source: str = "sample") -> dict | None:
         """The saved run for this question, if it is recent and was made from the same data."""
         with self._db() as db:
             row = db.execute("select * from saved_answers where key = ? and data_version = ? and saved_at > ?",
-                             (answer_key(question, interactive), version, time.time() - self.max_age_s)).fetchone()
+                             (answer_key(question, interactive, source), version,
+                              time.time() - self.max_age_s)).fetchone()
             if not row:
                 return None
             db.execute("update saved_answers set reused = reused + 1 where key = ?", (row["key"],))
         return {"question": row["question"], "saved_at": row["saved_at"], "trace_id": row["trace_id"],
                 "events": json.loads(row["events"])}
 
-    def has(self, question: str, version: str) -> bool:
+    def has(self, question: str, version: str, source: str = "sample") -> bool:
         with self._db() as db:
             return db.execute("select 1 from saved_answers where key in (?, ?) and data_version = ? and saved_at > ?",
-                              (answer_key(question, False), answer_key(question, True), version,
+                              (answer_key(question, False, source), answer_key(question, True, source), version,
                                time.time() - self.max_age_s)).fetchone() is not None
 
 

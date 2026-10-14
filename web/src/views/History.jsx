@@ -9,7 +9,8 @@ const STATUS = {
   answered: { text: "Answered", mark: "✓", style: "text-code" },
   reused: { text: "Saved answer", mark: "↺", style: "text-code" },
   waiting: { text: "Waiting for a choice", mark: "…", style: "text-partial" },
-  running: { text: "Running or stopped", mark: "…", style: "text-muted" },
+  running: { text: "Running", mark: "…", style: "text-muted" },
+  stopped: { text: "Stopped: the page was closed", mark: "■", style: "text-muted" },
   failed: { text: "Failed", mark: "!", style: "text-fail" },
 };
 

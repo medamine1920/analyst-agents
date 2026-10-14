@@ -116,7 +116,16 @@ export default function ResultTabs({ steps, labels, children }) {
         </div>
       )}
       <div role="tabpanel">
-        {tab === "answer" && children}
+        {tab === "answer" && (
+          <div className="space-y-6">
+            {children}
+            {sets.some((s) => s.chart && s.chart !== "tiles") && (
+              <div className="rounded-xl border border-rule bg-surface p-4">
+                <ChartView sets={sets} labels={labels} />
+              </div>
+            )}
+          </div>
+        )}
         {tab === "data" && <DataView sets={sets} />}
         {tab === "chart" && <ChartView sets={sets} labels={labels} />}
       </div>

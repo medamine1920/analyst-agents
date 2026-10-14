@@ -62,31 +62,37 @@ def result_from_events(events: list[dict]) -> dict:
     }
 
 
-def build_mcp_app(ask: Callable[[str, str, bool], Awaitable[dict]], metrics: Callable[[], Awaitable[list[dict]]]):
+def build_mcp_app(ask: Callable[[str, str, bool, str], Awaitable[dict]],
+                  metrics: Callable[[str, str], Awaitable[list[dict]]]):
     """The analyst as an MCP server, served over HTTP from inside the console."""
     server = MCPServer(name="analyst-console", instructions=MCP_INSTRUCTIONS)
 
     @server.tool(description="Answer a business question from the governed metrics, with every number "
                              "computed and checked in code. Returns the answer, the data behind it, and its cost. "
                              "A repeated question returns the saved answer at no cost unless fresh is true.")
-    async def ask_analyst(question: str, fresh: bool = False) -> dict:
+    async def ask_analyst(question: str, fresh: bool = False, source: str = "sample") -> dict:
         user = REQUEST_USER.get()
         if not user:
             raise ToolError("Not signed in: send an API key as 'Authorization: Bearer ak_...'.")
         if not 3 <= len(question.strip()) <= 500:
             raise ToolError("Ask a question of 3 to 500 characters.")
         try:
-            result = await ask(user, question, fresh)
-        except LimitReached as exc:
+            result = await ask(user, question, fresh, source)
+        except (LimitReached, LookupError) as exc:
             raise ToolError(str(exc)) from exc
         if result["error"]:
             raise ToolError(f"The run stopped: {result['error']}")
         return result
 
-    @server.tool(description="The governed metrics the analyst can use: name, label, type, definition, "
-                             "and the dimensions each can be broken down by.")
-    async def list_metrics() -> list[dict]:
-        return await metrics()
+    @server.tool(description="The metrics the analyst can use: name, label, type, definition, and the "
+                             "dimensions each can be broken down by. source is 'sample' (the demo shop) or the "
+                             "id of one of your own data sources.")
+    async def list_metrics(source: str = "sample") -> list[dict]:
+        user = REQUEST_USER.get()
+        try:
+            return await metrics(user, source)
+        except LookupError as exc:
+            raise ToolError(str(exc)) from exc
 
     # Stateless, JSON responses: every call stands alone, so restarts and several workers are fine.
     # Host checks guard servers without authentication; this endpoint requires an API key instead.

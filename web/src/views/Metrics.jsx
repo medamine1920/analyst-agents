@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import SourcePicker, { useSource } from "../components/SourcePicker";
 import { Ident } from "../components/bits";
 import { getJSON } from "../lib/api";
 import { linkTo } from "../lib/route";
@@ -16,9 +17,12 @@ export default function Metrics() {
   const [data, setData] = useState(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
+  const source = useSource();
   useEffect(() => {
-    getJSON("/api/metrics").then(setData).catch((e) => setError(e.message));
-  }, []);
+    setData(null);
+    const scope = source === "sample" ? "" : `?source=${encodeURIComponent(source)}`;
+    getJSON(`/api/metrics${scope}`).then(setData).catch((e) => setError(e.message));
+  }, [source]);
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     const metrics = data?.metrics ?? [];
@@ -30,6 +34,7 @@ export default function Metrics() {
   if (!data) return <p className="text-muted">Loading the metric catalog…</p>;
   return (
     <div className="space-y-4">
+      <SourcePicker />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <p className="max-w-2xl text-sm text-muted">
           The agent can only use these {data.metrics.length} governed metrics. Data runs from {data.data_range.first_date} to{" "}

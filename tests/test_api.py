@@ -152,3 +152,4 @@ def test_live_runs_are_saved_apart_from_the_demo_runs_and_both_are_listed(tmp_pa
         assert {t["id"] for t in client.get("/api/traces").json()} == {"demo-1", saved["id"]}
         assert client.get("/api/traces/demo-1").json()["question"] == "Demo?"
         assert client.get(f"/api/traces/{saved['id']}").status_code == 200
+

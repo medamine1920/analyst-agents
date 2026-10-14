@@ -91,6 +91,30 @@ Under 180 words, at most one small table.
 {notes}"""
 
 
+# What a user's own data source changes in the rules: the sample shop's examples go, the rest stays.
+SOURCE_PROMPT_CHANGES = [
+    ("a coffee-and-sandwich chain", "{business}"),
+    ("  periods. Code adds store and order-volume breakdowns automatically.", "  periods."),
+    ("(e.g. effective tax rate)", "(e.g. an average per unit)"),
+    ("e.g. store__store_name = Brooklyn.", "e.g. sales__region = North."),
+    (("- To find items with no activity (e.g. stores without sales), query store_count together\n"
+      "  with the activity metric grouped by the same dimension.\n"),
+     ("- For a change over time (month by month, week by week), add a step grouped by\n"
+      "  metric_time__month (or __week, __day, __quarter, __year).\n")),
+]
+
+
+def source_prompts(business: str) -> tuple[str, str]:
+    """Planner and writer rules for a data source a user added: same rules, none of the shop's examples."""
+    planner = PLANNER_PROMPT
+    for old, new in SOURCE_PROMPT_CHANGES:
+        if old not in planner:
+            raise AssertionError(f"The planner prompt changed; update SOURCE_PROMPT_CHANGES: {old!r}")
+        planner = planner.replace(old, new.replace("{business}", business.replace("{", "(").replace("}", ")")))
+    writer = WRITER_PROMPT.replace("that a store opened or a promotion ran", "that something new started or a campaign ran")
+    return planner, writer
+
+
 class AnalystState(TypedDict, total=False):
     question: str
     resolution: dict
@@ -150,12 +174,15 @@ def approval_request(pending: list[dict], catalog: dict) -> dict:
         for item in pending]}
 
 
-def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpointer=None):
+def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpointer=None,
+                use_glossary: bool = True, prompts: tuple[str, str] | None = None):
     """Build the analyst graph. Pausing for approval ({"interactive": True}) needs a checkpointer."""
 
     async def resolve(state: AnalystState) -> dict:
         context = await gateway.context()
-        return {"resolution": resolve_terms(state["question"]), "usage": [], "tool_calls": [],
+        # The business glossary describes the sample shop's metrics; a user's own source has none yet.
+        resolution = resolve_terms(state["question"]) if use_glossary else {"ambiguities": [], "resolved": []}
+        return {"resolution": resolution, "usage": [], "tool_calls": [],
                 "plan_attempts": 0, "write_attempts": 0, "feedback": [], "choices": {},
                 "pending_ambiguities": [], "facts": {"data_range": context["data_range"]}}
 
@@ -171,7 +198,7 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
         context = await gateway.context()
         catalog, data_range = context["catalog"], context["data_range"]
         choices = state.get("choices", {})
-        system = PLANNER_PROMPT.format(first=data_range["first_date"], last=data_range["last_date"],
+        system = (prompts[0] if prompts else PLANNER_PROMPT).format(first=data_range["first_date"], last=data_range["last_date"],
                                        notes=_ambiguity_notes(state["resolution"], choices),
                                        catalog=_catalog_text(catalog))
         feedback, usage, attempts = list(state.get("feedback", [])), list(state["usage"]), state["plan_attempts"]
@@ -245,7 +272,7 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
         if state.get("review_issues"):
             request += (f"\n\nYour previous draft:\n{state['draft']}\n\nFix these problems:\n- "
                         + "\n- ".join(state["review_issues"]))
-        text, call_usage = await write_fn([SystemMessage(WRITER_PROMPT.format(notes=notes)), HumanMessage(request)])
+        text, call_usage = await write_fn([SystemMessage((prompts[1] if prompts else WRITER_PROMPT).format(notes=notes)), HumanMessage(request)])
         return {"draft": text, "write_attempts": state["write_attempts"] + 1,
                 "usage": [*state["usage"], call_usage]}
 

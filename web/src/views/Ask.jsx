@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import Suggestions from "../components/Suggestions";
 import Trace from "../components/Trace";
 import { Ident } from "../components/bits";
 import { getJSON, streamAsk, streamResume } from "../lib/api";
@@ -74,7 +75,22 @@ function ApprovalCard({ approval, onChoose }) {
   );
 }
 
-export function AnswerPanel({ question, steps, done, label, running, approval, onChoose }) {
+/** The answer came from an earlier run of the same question: say so, and offer a fresh run. */
+function ReusedNote({ reused, onAskAgain }) {
+  const when = new Date(reused.saved_at * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-code-tint px-3 py-2 text-sm text-code">
+      <span>Saved answer from {when}. It used no model tokens.</span>
+      {onAskAgain && (
+        <button type="button" onClick={onAskAgain} className="font-medium underline">
+          Ask again
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain }) {
   const answer = finalAnswer(steps, done);
   return (
     <section aria-label="Answer" className="space-y-4">
@@ -88,8 +104,9 @@ export function AnswerPanel({ question, steps, done, label, running, approval, o
         running && <p className="text-muted">Working on it. Each step appears on the right as it finishes.</p>
       )}
       {approval && !running && <ApprovalCard approval={approval} onChoose={onChoose} />}
+      {reused && !running && <ReusedNote reused={reused} onAskAgain={onAskAgain} />}
       <ReviewBadge steps={steps} />
-      {done && (
+      {done && !reused && (
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
           <div>
             <dt className="inline">Time </dt>
@@ -117,6 +134,7 @@ export default function Ask() {
   const [running, setRunning] = useState(false);
   const [interactive, setInteractive] = useState(true);
   const [approval, setApproval] = useState(null);
+  const [reused, setReused] = useState(null); // set when the answer is a saved one
   const [animate, setAnimate] = useState(false);
   const [error, setError] = useState("");
   const timers = useRef([]);
@@ -134,6 +152,7 @@ export default function Ask() {
     controller.current?.abort();
     setError("");
     setApproval(null);
+    setReused(null);
     setShown({ question: nextQuestion, steps: [], done: null, label });
   }
 
@@ -173,6 +192,7 @@ export default function Ask() {
     const onEvent = (ev) => {
       if (ev.type === "step") setShown((s) => ({ ...s, steps: [...s.steps, ev] }));
       if (ev.type === "approval") setApproval(ev);
+      if (ev.type === "reused") setReused(ev);
       if (ev.type === "done") setShown((s) => ({ ...s, done: ev }));
       if (ev.type === "saved") loadTraces();
       if (ev.type === "saved" || ev.type === "approval") window.dispatchEvent(new Event("analyst:question-finished"));
@@ -187,12 +207,16 @@ export default function Ask() {
     }
   }
 
-  function askLive(event) {
-    event.preventDefault();
+  function askLive(event, fresh = false) {
+    event?.preventDefault();
     const text = question.trim();
     if (text.length < 3) return;
     reset(text);
-    return follow((onEvent, signal) => streamAsk(text, interactive, onEvent, signal));
+    return follow((onEvent, signal) => streamAsk(text, interactive, onEvent, signal, fresh));
+  }
+
+  function addMetric(metric) {
+    setQuestion((q) => (q.trim() ? `${q.trim()} ${metric.label.toLowerCase()}` : metric.label));
   }
 
   function choose(choice) {
@@ -248,6 +272,7 @@ export default function Ask() {
               <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} />
               Ask me when a business term has several definitions (otherwise all of them are reported).
             </label>
+            <Suggestions text={question} onPickQuestion={setQuestion} onPickMetric={addMetric} />
             <div className="flex flex-wrap gap-2">
               {EXAMPLES.map((example) => (
                 <button
@@ -289,7 +314,14 @@ export default function Ask() {
 
       {shown.question ? (
         <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-          <AnswerPanel {...shown} running={running} approval={approval} onChoose={choose} />
+          <AnswerPanel
+            {...shown}
+            running={running}
+            approval={approval}
+            onChoose={choose}
+            reused={reused}
+            onAskAgain={mode === "live" ? () => askLive(null, true) : null}
+          />
           <section aria-label="How this answer was built" className="rounded-xl border border-rule bg-surface/70 p-5">
             <h3 className="mb-4 font-display text-lg font-semibold">How this answer was built</h3>
             <Trace steps={shown.steps} animate={animate} />

@@ -155,3 +155,34 @@ test("the console asks for sign-in, then shows the account and today's budget", 
   expect(screen.getByRole("link", { name: "Ask" })).toBeTruthy();
   expect(posts[0][1]).toEqual({ name: "ana", password: "wrong password!" });
 });
+
+test("a repeated question shows the saved answer, and Ask again runs it fresh", async () => {
+  const steps = trace.events.filter((e) => e.type === "step");
+  const done = trace.events.find((e) => e.type === "done");
+  const reusedNote = { type: "reused", saved_at: 1791900000, trace_id: trace.id, question: trace.question };
+  const posts = [];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (url.startsWith("/api/suggestions")) {
+      const body = { questions: [{ question: trace.question, times_asked: 3, saved_answer: true }], metrics: [] };
+      return { ok: true, json: async () => body };
+    }
+    if (!options) return { ok: true, json: async () => [] };
+    const body = JSON.parse(options.body);
+    posts.push(body);
+    return body.fresh ? sseResponse([...steps, done]) : sseResponse([...steps, reusedNote, { ...done, reused: true }]);
+  });
+
+  render(<Ask />);
+  fireEvent.click(screen.getByRole("radio", { name: "Ask the agent live" }));
+  // Suggestions: the question was asked before and has a saved answer.
+  const suggestion = await screen.findByRole("button", { name: /asked 3 times/ });
+  expect(screen.getByText("saved answer, no tokens")).toBeTruthy();
+  fireEvent.click(suggestion); // fills the question box
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  expect(await screen.findByText(/Saved answer from .*It used no model tokens/)).toBeTruthy();
+  expect(posts[0]).toEqual({ question: trace.question, interactive: true });
+  fireEvent.click(screen.getByRole("button", { name: "Ask again" }));
+  await waitFor(() => expect(posts[1]).toEqual({ question: trace.question, interactive: true, fresh: true }));
+  await waitFor(() => expect(screen.queryByText(/Saved answer from/)).toBeNull());
+});

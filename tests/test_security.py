@@ -113,8 +113,9 @@ def test_sign_in_ask_and_see_the_budget_go_down(api):
     history = api.get("/api/history").json()
     assert history[0]["question"] == "How many orders were placed?" and history[0]["status"] == "answered"
     # 4,250 of 6,000 used: the next question is still allowed, the one after that is refused.
-    events_of(api.post("/api/ask", json={"question": "How many orders were placed?"}))
-    refused = api.post("/api/ask", json={"question": "How many orders were placed?"})
+    # ("fresh" skips the saved answer, which would otherwise answer the repeat for free.)
+    events_of(api.post("/api/ask", json={"question": "How many orders were placed?", "fresh": True}))
+    refused = api.post("/api/ask", json={"question": "How many orders were placed?", "fresh": True})
     assert refused.status_code == 429 and "budget" in refused.json()["detail"]
     api.post("/api/auth/logout")
     assert api.get("/api/metrics").status_code == 401

@@ -93,6 +93,18 @@ every question with its user, status, tokens and trace. A middleware guards ever
 except health and sign-in, so a new route cannot be left open by accident. 8 new Python tests and
 1 web test; checked by hand in the browser.
 
+## 2026-10-14: saved answers and suggestions
+
+Repeated questions now cost nothing: a finished run whose answer passed the number check is stored
+with all its steps in the console database (a volume, so it survives deploys) and replayed when
+the same question comes again. Same question means the same words once case, spacing and final
+punctuation are ignored, in the same mode. A saved answer is used for 7 days and only while the
+data and the metric definitions are the same (a fingerprint of the data range and catalog), so a
+warehouse change can never serve a stale number. Runs where the user picked a definition, or whose
+answer failed the check, are never reused. "Ask again" runs the agent fresh. Suggestions show past
+questions as the user types (most asked first, marked when a free saved answer exists) and metrics
+named by the typed words. Checked live: 2,779 tokens the first time, 0 the second.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that

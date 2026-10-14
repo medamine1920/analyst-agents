@@ -35,6 +35,7 @@ from app.agents.orchestrated.graph import (
     thread_config,
 )
 from app.agents.orchestrated.plan import ALL_DEFINITIONS
+from app.api.answers import AnswerStore, data_version, suggest
 from app.api.security import (
     SESSION_COOKIE,
     SESSION_HOURS,
@@ -55,6 +56,7 @@ OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me"}
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     interactive: bool = Field(default=False, description="Pause and ask when a business term is ambiguous")
+    fresh: bool = Field(default=False, description="Run the agent even if a saved answer exists")
 
 
 class SignInRequest(BaseModel):
@@ -82,6 +84,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     state: dict[str, Any] = {}
     auth = (os.environ.get("CONSOLE_AUTH", "on").lower() != "off") if auth is None else auth
     store, limits = SecurityStore(security_db), limits or Limits.from_env()
+    answers = AnswerStore(store.path)  # same database file: it is the volume that survives deploys
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
     paused_dir = traces_dir / "paused"  # the steps already shown for runs waiting on the user
 
@@ -126,6 +129,18 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         user = request.state.user
         return {"user": user, "auth": auth, "usage": store.usage(user, limits) if user else None}
 
+    async def current_data_version() -> str:
+        return data_version(await state["gateway"].context())
+
+    @app.get("/api/suggestions")
+    async def suggestions(q: str = "") -> dict:
+        """Questions asked before (most asked first) and metrics matching what is being typed."""
+        context, version = await state["gateway"].context(), await current_data_version()
+        found = suggest(q, store.recent_questions(), context["catalog"])
+        for item in found["questions"]:
+            item["saved_answer"] = answers.has(item["question"], version)
+        return found
+
     @app.get("/api/history")
     async def history(request: Request) -> list[dict]:
         """The signed-in user's recent questions, newest first."""
@@ -146,7 +161,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         usage = event.get("usage") or {}
         return usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
 
-    def respond(question: str, thread_id: str, stream, earlier: list[dict], question_id: int | None) -> StreamingResponse:
+    def respond(question: str, thread_id: str, stream, earlier: list[dict], question_id: int | None,
+                interactive: bool = True) -> StreamingResponse:
         """Stream a run. When it pauses, keep its steps; when it finishes, save the whole trace.
 
         The audit log follows the run: waiting, answered or failed, with the tokens it spent.
@@ -171,6 +187,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                     await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
                     if question_id:
                         store.finish_question(question_id, "answered", spent(last), trace_id)
+                    answers.save(question, interactive, await current_data_version(), collected, trace_id)
                     yield sse({"type": "saved", "id": trace_id})
             except Exception as exc:  # noqa: BLE001 - report any failure to the console, never hang the stream
                 if question_id:
@@ -230,13 +247,31 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @app.post("/api/ask")
     async def ask(request: AskRequest, http: Request) -> StreamingResponse:
+        if not request.fresh:
+            saved = answers.find(request.question, request.interactive, await current_data_version())
+            if saved:
+                store.log_reused(http.state.user, request.question, saved["trace_id"])
+                return replay_saved(saved)
         thread_id = uuid.uuid4().hex
         try:
             question_id = store.start_question(http.state.user, request.question, limits, thread_id)
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
         stream = stream_trace(graph(), request.question, thread_id=thread_id, interactive=request.interactive)
-        return respond(request.question, thread_id, stream, [], question_id)
+        return respond(request.question, thread_id, stream, [], question_id, request.interactive)
+
+    def replay_saved(saved: dict) -> StreamingResponse:
+        """Stream a saved run like a live one, saying where it came from. No model call, no tokens."""
+        async def events():
+            note = {"type": "reused", "saved_at": saved["saved_at"], "trace_id": saved["trace_id"],
+                    "question": saved["question"]}
+            for event in saved["events"]:
+                if event["type"] == "done":
+                    yield sse(note)
+                    event = {**event, "reused": True}
+                yield sse(event)
+
+        return StreamingResponse(events(), media_type="text/event-stream")
 
     @app.post("/api/resume")
     async def resume(request: ResumeRequest) -> StreamingResponse:

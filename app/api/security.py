@@ -183,6 +183,19 @@ class SecurityStore:
             return db.execute("insert into questions (user_name, question, asked_at, day, thread_id) "
                               "values (?, ?, ?, ?, ?)", (user, question, now, today(), thread_id)).lastrowid
 
+    def log_reused(self, user: str, question: str, trace_id: str | None) -> None:
+        """A saved answer was shown again: logged, but it spent nothing and counts against no limit."""
+        with self._db() as db:
+            db.execute("insert into questions (user_name, question, asked_at, day, status, trace_id) "
+                       "values (?, ?, ?, ?, 'reused', ?)", (user, question, time.time(), today(), trace_id))
+
+    def recent_questions(self, limit: int = 500) -> list[str]:
+        """Questions that got an answer, newest first, from every user (for suggestions)."""
+        with self._db() as db:
+            rows = db.execute("select question from questions where status in ('answered', 'reused') "
+                              "order by asked_at desc limit ?", (limit,))
+            return [row["question"] for row in rows]
+
     def question_for_thread(self, thread_id: str) -> int | None:
         with self._db() as db:
             row = db.execute("select id from questions where thread_id = ? order by id desc limit 1",

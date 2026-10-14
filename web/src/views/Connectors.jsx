@@ -69,6 +69,7 @@ function examples(origin, key) {
 export default function Connectors() {
   const [keys, setKeys] = useState(null);
   const [name, setName] = useState("");
+  const [days, setDays] = useState("90");
   const [created, setCreated] = useState(null);
   const [error, setError] = useState("");
   const load = () => getJSON("/api/keys").then(setKeys).catch((e) => setError(e.message));
@@ -80,7 +81,7 @@ export default function Connectors() {
     event.preventDefault();
     setError("");
     try {
-      setCreated(await postJSON("/api/keys", { name: name.trim() }));
+      setCreated(await postJSON("/api/keys", { name: name.trim(), days: days === "never" ? null : Number(days) }));
       setName("");
       load();
     } catch (e) {
@@ -99,8 +100,10 @@ export default function Connectors() {
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
       <section className="space-y-4">
         <p className="text-sm text-muted">
-          Other applications use the analyst with an API key. A key acts as you: it shares today's token budget,
-          counts towards your hourly limit, and its questions appear in your history. It cannot create or revoke keys.
+          Keys let other applications (scripts, spreadsheets, MCP clients) ask the analyst as you: they share
+          today's token budget, count towards your hourly limit, and their questions appear in your history. A key is
+          shown once, stored only as a fingerprint, and cannot create or revoke keys. Give each application its own
+          key, so you can revoke one without touching the others.
         </p>
         {created && <NewKey created={created} onDone={() => setCreated(null)} />}
         <form onSubmit={create} className="flex flex-col gap-2 sm:flex-row">
@@ -115,6 +118,15 @@ export default function Connectors() {
             maxLength={80}
             className="flex-1 rounded-lg border border-rule bg-surface px-3 py-2"
           />
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-muted">Works for</span>
+            <select value={days} onChange={(e) => setDays(e.target.value)} aria-label="How long the key works" className="rounded-lg border border-rule bg-surface px-2 py-2">
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+              <option value="never">No end date</option>
+            </select>
+          </label>
           <button type="submit" disabled={!name.trim()} className="rounded-lg bg-ink px-4 py-2 font-medium text-white disabled:opacity-50">
             Create key
           </button>
@@ -137,7 +149,8 @@ export default function Connectors() {
                 <div>
                   <p className="font-medium">{key.name}</p>
                   <p className="text-xs text-muted">
-                    <span className="font-mono">{key.prefix}…</span> · created {when(key.created_at)} · last used{" "}
+                    <span className="font-mono">{key.prefix}…</span> · created {when(key.created_at)} ·{" "}
+                    {key.expires_at ? (key.expires_at * 1000 < Date.now() ? "expired" : `works until ${when(key.expires_at)}`) : "no end date"} · last used{" "}
                     {when(key.last_used_at)}
                   </p>
                 </div>

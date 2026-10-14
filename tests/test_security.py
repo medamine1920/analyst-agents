@@ -125,8 +125,8 @@ def test_invited_accounts_must_choose_their_own_password(store):
     temporary = store.invite("bob")
     assert store.account("bob") == {**store.account("bob"), "role": "user", "must_change": True}
     assert store.sign_in("bob", temporary)
-    assert not store.change_password("bob", "wrong password!", "bob's own password")
-    assert store.change_password("bob", temporary, "bob's own password")
+    assert not store.change_password("bob", "wrong password!", "a quiet harbour at dawn")
+    assert store.change_password("bob", temporary, "a quiet harbour at dawn")
     assert not store.account("bob")["must_change"] and store.sign_in("bob", temporary) is None
     with pytest.raises(ValueError):
         store.invite("bob")  # already exists
@@ -169,9 +169,82 @@ def test_admins_manage_accounts_and_everyone_changes_their_own_password(api):
     api.post("/api/auth/login", json={"name": "bob", "password": invited["temporary_password"]})
     assert api.get("/api/auth/me").json()["must_change_password"]
     assert api.get("/api/admin/users").status_code == 403  # not an admin
-    wrong = api.post("/api/account/password", json={"current": "nope", "new": "bob's own password"})
+    wrong = api.post("/api/account/password", json={"current": "nope", "new": "a quiet harbour at dawn"})
     assert wrong.status_code == 403
     assert api.post("/api/account/password", json={"current": invited["temporary_password"],
-                                                   "new": "bob's own password"}).status_code == 200
+                                                   "new": "a quiet harbour at dawn"}).status_code == 200
     me = api.get("/api/auth/me").json()
     assert me["user"] == "bob" and not me["must_change_password"]  # still signed in, with a new cookie
+
+
+def test_weak_passwords_are_refused(store):
+    for weak, reason in (("short", "10 characters"), ("password123", "easy to guess"), ("aaaaaaaaaaaa", "easy to guess"),
+                         ("ana-is-great-2025", "name out")):
+        with pytest.raises(ValueError, match=reason):
+            store.add_user("ana", weak)
+
+
+def test_two_step_sign_in_with_an_authenticator_and_recovery_codes(store):
+    import time as clock
+
+    from app.api import twofactor
+    from app.api.security import TwoFactorRequired
+
+    setup = store.start_two_factor("ana")
+    assert setup["uri"].startswith("otpauth://totp/") and not store.two_factor_on("ana")
+    assert store.finish_two_factor("ana", "000000") is None  # a wrong first code turns nothing on
+    codes = store.finish_two_factor("ana", twofactor.code_at(setup["secret"], clock.time()))
+    assert len(codes) == 8 and store.two_factor_on("ana")
+    with pytest.raises(TwoFactorRequired, match="6-digit"):
+        store.sign_in("ana", PASSWORD)
+    with pytest.raises(TwoFactorRequired, match="not right"):
+        store.sign_in("ana", PASSWORD, "123456")
+    assert store.sign_in("ana", PASSWORD, twofactor.code_at(setup["secret"], clock.time()))
+    assert store.sign_in("ana", PASSWORD, codes[0])  # a recovery code works once
+    with pytest.raises(TwoFactorRequired):
+        store.sign_in("ana", PASSWORD, codes[0])
+    assert setup["secret"].encode() not in store.path.read_bytes()  # the secret is stored encrypted
+    assert store.stop_two_factor("ana", PASSWORD) and store.sign_in("ana", PASSWORD)
+
+
+def test_sessions_are_listed_and_can_be_ended_from_elsewhere(store):
+    here = store.sign_in("ana", PASSWORD, ip="1.2.3.4", user_agent="Firefox")
+    there = store.sign_in("ana", PASSWORD, ip="5.6.7.8", user_agent="Phone")
+    listed = store.sessions("ana", here)
+    assert {s["ip"] for s in listed} == {"1.2.3.4", "5.6.7.8"} and sum(s["current"] for s in listed) == 1
+    other = next(s for s in listed if not s["current"])
+    assert store.end_sessions("ana", other["id"], keep=here) == 1
+    assert store.user_for(there) is None and store.user_for(here) == "ana"
+    assert [e["kind"] for e in store.events("ana")][:2] == ["signed in", "signed in"]
+
+
+def test_api_keys_can_expire(store):
+    import time as clock
+
+    key = store.create_key("ana", "Short-lived", days=1)
+    assert store.user_for_key(key["key"]) == "ana"
+    with store._db() as db:
+        db.execute("update api_keys set expires_at = ? where prefix = ?", (clock.time() - 1, key["prefix"]))
+    assert store.user_for_key(key["key"]) is None
+
+
+@pytest.mark.integration
+def test_headers_projects_and_admin_only_evaluations(api):
+    response = api.get("/api/health")
+    assert response.headers["x-frame-options"] == "DENY" and "frame-ancestors 'none'" in response.headers[
+        "content-security-policy"] and response.headers["cache-control"] == "no-store"
+    api.post("/api/auth/login", json={"name": "ana", "password": PASSWORD})
+    project = api.post("/api/projects", json={"name": "Q3 review"}).json()
+    events = api.post("/api/ask", json={"question": "How many orders were placed?", "project": project["id"]})
+    assert events.status_code == 200
+    assert api.get("/api/history", params={"project": project["id"]}).json()[0]["project"] == project["id"]
+    assert api.get("/api/projects").json()[0]["questions"] == 1
+    assert api.patch(f"/api/projects/{project['id']}", json={"name": "Q3 sales review"}).json()["name"] == "Q3 sales review"
+    assert api.post("/api/ask", json={"question": "How many orders?", "project": "ffffffffff"}).status_code == 404
+    assert api.get("/api/evals").status_code == 200  # ana is the admin
+    invited = api.post("/api/admin/users", json={"name": "bob"}).json()
+    api.post("/api/auth/logout")
+    api.post("/api/auth/login", json={"name": "bob", "password": invited["temporary_password"]})
+    assert api.get("/api/evals").status_code == 403  # development figures are for admins
+    assert api.get("/api/projects").json() == []  # projects are private
+    assert api.delete(f"/api/projects/{project['id']}").status_code == 404

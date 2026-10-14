@@ -15,7 +15,8 @@ export function useSource() {
   return source;
 }
 
-export default function SourcePicker() {
+/** compact: a small inline control for the question box's options row. */
+export default function SourcePicker({ compact = false }) {
   const source = useSource();
   const [sources, setSources] = useState([]);
   useEffect(() => {
@@ -32,7 +33,8 @@ export default function SourcePicker() {
   if (sources.length <= 1) {
     return (
       <p className="text-sm text-muted">
-        Asking the sample coffee shop. <a className="underline" href={linkTo("sources")}>Add your own data</a>
+        {compact ? "Data: sample coffee shop · " : "Asking the sample coffee shop. "}
+        <a className="underline" href={linkTo("sources")}>{compact ? "add yours" : "Add your own data"}</a>
       </p>
     );
   }
@@ -42,7 +44,7 @@ export default function SourcePicker() {
       <select
         value={source}
         onChange={(e) => chooseSource(e.target.value)}
-        className="rounded-lg border border-rule bg-surface px-2.5 py-1.5"
+        className={`rounded-lg border border-rule bg-surface ${compact ? "px-2 py-1" : "px-2.5 py-1.5"}`}
       >
         {sources.map((s) => (
           <option key={s.id} value={s.id} disabled={s.status !== "ready"}>
@@ -51,9 +53,11 @@ export default function SourcePicker() {
           </option>
         ))}
       </select>
-      <a className="text-muted underline hover:text-ink" href={linkTo("sources")}>
-        Manage
-      </a>
+      {!compact && (
+        <a className="text-muted underline hover:text-ink" href={linkTo("sources")}>
+          Manage
+        </a>
+      )}
     </label>
   );
 }

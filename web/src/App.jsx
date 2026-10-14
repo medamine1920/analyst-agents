@@ -1,37 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
 
+import Sidebar from "./components/Sidebar";
 import { getJSON, postJSON } from "./lib/api";
-import { formatNumber } from "./lib/format";
-import { parseHash } from "./lib/route";
-import Account, { PasswordForm } from "./views/Account";
-import Admin from "./views/Admin";
+import { linkTo, parseHash } from "./lib/route";
+import { PasswordForm } from "./views/Account";
 import Ask from "./views/Ask";
-import Connectors from "./views/Connectors";
-import Evals from "./views/Evals";
 import History from "./views/History";
 import Metrics from "./views/Metrics";
+import Settings from "./views/Settings";
 import SignIn from "./views/SignIn";
 import Sources from "./views/Sources";
 
-// Two groups in the sidebar: the work itself, then the settings around it.
-const VIEWS = [
-  { id: "ask", label: "Ask", hint: "Ask a question or replay a run", component: Ask, group: "Analyse" },
-  { id: "history", label: "History", hint: "Your questions and what they cost", component: History, group: "Analyse" },
-  { id: "metrics", label: "Metrics", hint: "The governed metric catalog", component: Metrics, group: "Analyse" },
-  { id: "evals", label: "Evaluations", hint: "How often the agent is right", component: Evals, group: "Analyse" },
-  { id: "sources", label: "Data sources", hint: "Upload files or connect a database", component: Sources, group: "Data" },
-  { id: "connectors", label: "Connectors", hint: "Use the analyst from other applications", component: Connectors, group: "Data" },
-  { id: "account", label: "Account", hint: "Your password and your account", component: Account, group: "Settings" },
-  { id: "admin", label: "Admin", hint: "Invite people and manage accounts", component: Admin, group: "Settings", admin: true },
-];
-
-function visibleViews(session) {
-  return VIEWS.filter((v) => !v.admin || session?.role === "admin");
-}
+const VIEWS = {
+  ask: { title: "Ask", component: Ask },
+  history: { title: "All questions", hint: "Everything you asked, with what each answer cost", component: History },
+  metrics: { title: "Metrics", hint: "What the agent can measure, and how each metric is defined", component: Metrics },
+  sources: { title: "Data sources", hint: "Upload files or connect a database, then ask about it", component: Sources },
+  settings: { title: "Settings", component: Settings },
+};
+// Old addresses keep working: they now live under Settings.
+const MOVED = { connectors: "keys", account: "security", admin: "people", evals: "developer" };
 
 function currentRoute() {
   const { view, params } = parseHash();
-  return { id: view, params };
+  if (MOVED[view]) return { view: "settings", params: { tab: MOVED[view] } };
+  return { view: VIEWS[view] ? view : "ask", params };
 }
 
 /** Who is signed in and how much of today's budget is left; null until the first answer arrives. */
@@ -57,73 +50,6 @@ function useSession() {
   return [session, refresh];
 }
 
-/** Today's shared token budget as a meter: the track is a lighter step of the fill's own hue. */
-function BudgetMeter({ usage }) {
-  const left = usage.tokens_left / Math.max(usage.daily_tokens, 1);
-  return (
-    <div className="space-y-1.5">
-      <p className="text-sm">{formatNumber(usage.tokens_left)} model tokens left today</p>
-      <div
-        className="h-1.5 overflow-hidden rounded-full bg-meter-track"
-        role="meter"
-        aria-label="Model tokens left today"
-        aria-valuemin={0}
-        aria-valuemax={usage.daily_tokens}
-        aria-valuenow={usage.tokens_left}
-      >
-        <div className={`h-full rounded-full ${left < 0.1 ? "bg-fail" : "bg-series-1"}`} style={{ width: `${left * 100}%` }} />
-      </div>
-      <p className="text-xs text-muted">
-        Shared by everyone · {usage.questions_last_hour} of {usage.questions_per_hour} questions this hour
-      </p>
-    </div>
-  );
-}
-
-function Sidebar({ current, session, onSignOut }) {
-  const signedIn = session?.auth && session.user;
-  return (
-    <aside className="border-b border-rule bg-surface lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-60 lg:flex-col lg:border-r lg:border-b-0">
-      <div className="px-5 pt-5 pb-3">
-        <p className="font-display text-lg leading-none font-bold tracking-tight">Analyst Console</p>
-        <p className="mt-1.5 text-xs text-muted">Answers from governed business metrics, every step shown.</p>
-      </div>
-      <nav aria-label="Views" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-col lg:overflow-visible">
-        {visibleViews(session).map((v, index, all) => (
-          <span key={v.id} className="contents">
-            {all[index - 1]?.group !== v.group && (
-              <span className="hidden px-2.5 pt-3 pb-1 text-xs font-medium tracking-wide text-muted uppercase lg:block">{v.group}</span>
-            )}
-            <a
-              href={`#${v.id}`}
-              aria-current={v.id === current.id ? "page" : undefined}
-              title={v.hint}
-              className={`rounded-md px-2.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
-                v.id === current.id ? "bg-paper text-ink" : "text-muted hover:bg-paper hover:text-ink"
-              }`}
-            >
-              {v.label}
-            </a>
-          </span>
-        ))}
-      </nav>
-      {signedIn && (
-        <div className="hidden space-y-4 border-t border-rule px-5 py-4 lg:mt-auto lg:block">
-          {session.usage && <BudgetMeter usage={session.usage} />}
-          <p className="flex items-center justify-between gap-2 text-sm text-muted">
-            <span>
-              Signed in as <span className="text-ink">{session.user}</span>
-            </span>
-            <button type="button" onClick={onSignOut} className="underline hover:text-ink">
-              Sign out
-            </button>
-          </p>
-        </div>
-      )}
-    </aside>
-  );
-}
-
 export default function App() {
   const [route, setRoute] = useState(currentRoute);
   const [session, refresh] = useSession();
@@ -143,30 +69,23 @@ export default function App() {
     );
   }
   const signOut = () => postJSON("/api/auth/logout").finally(refresh);
-  const views = visibleViews(session);
-  const view = views.find((v) => v.id === route.id) ?? views[0];
-  const { params } = route;
+  const view = VIEWS[route.view];
   const View = view.component;
   return (
     <div className="min-h-screen">
-      <Sidebar current={view} session={session} onSignOut={signOut} />
-      <div className="lg:pl-60">
-        <header className="flex flex-wrap items-end justify-between gap-2 border-b border-rule px-5 py-4 sm:px-8">
-          <div>
-            <h1 className="text-xl font-semibold">{view.label}</h1>
-            <p className="text-sm text-muted">{view.hint}</p>
-          </div>
-          {session.auth && session.user && (
-            <p className="text-sm text-muted lg:hidden">
-              {session.usage && <span>{formatNumber(session.usage.tokens_left)} tokens left · </span>}
-              <button type="button" onClick={signOut} className="underline hover:text-ink">
-                Sign out
-              </button>
+      <Sidebar route={route} session={session} onSignOut={signOut} />
+      <div className="lg:pl-64">
+        {route.view !== "ask" && (
+          <header className="border-b border-rule px-5 py-4 sm:px-8">
+            <p className="text-xs text-muted">
+              <a href={linkTo("ask")} className="hover:underline">Analyst Console</a> / {view.title}
             </p>
-          )}
-        </header>
-        <main className="px-5 py-6 pb-16 sm:px-8">
-          <View params={params} session={session} />
+            <h1 className="text-xl font-semibold">{view.title}</h1>
+            {view.hint && <p className="text-sm text-muted">{view.hint}</p>}
+          </header>
+        )}
+        <main className={`mx-auto px-5 py-6 pb-16 sm:px-8 ${route.view === "ask" ? "max-w-6xl pt-10" : ""}`}>
+          <View params={route.params} session={session} onSessionChanged={refresh} />
         </main>
       </div>
     </div>

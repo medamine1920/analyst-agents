@@ -41,12 +41,14 @@ from app.agents.orchestrated.graph import (
 from app.agents.orchestrated.plan import ALL_DEFINITIONS
 from app.api.answers import AnswerStore, data_version, suggest
 from app.api.connectors import REQUEST_USER, build_mcp_app, result_from_events
+from app.api.projects import ProjectStore
 from app.api.security import (
     SESSION_COOKIE,
     SESSION_HOURS,
     LimitReached,
     Limits,
     SecurityStore,
+    TwoFactorRequired,
 )
 from app.api.sources_routes import add_source_routes
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
@@ -59,13 +61,46 @@ WEB_DIST = REPO_ROOT / "web" / "dist"
 # Groq's free tier allows 8K tokens a minute, so a few runs at once already hit the limit: the rest wait.
 MAX_LIVE_RUNS = int(os.environ.get("MAX_LIVE_RUNS", "2"))
 OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me"}
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+)
+
+
+def client_of(request: Request) -> tuple[str, str]:
+    """(address, browser) of whoever is asking; behind the reverse proxy the address is forwarded."""
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return forwarded or (request.client.host if request.client else ""), request.headers.get("user-agent", "")
 
 
 SOURCE_ID = r"^[a-z0-9]{1,40}$"
 
 
+PROJECT_ID = r"^[a-f0-9]{10}$"
+
+
+class ProjectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    source: str = Field(default=SAMPLE, pattern=r"^[a-z0-9]{1,40}$")
+
+
+class ProjectChange(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    source: str | None = Field(default=None, pattern=r"^[a-z0-9]{1,40}$")
+
+
+class TwoFactorCode(BaseModel):
+    code: str = Field(min_length=6, max_length=20)
+
+
+class PasswordOnly(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
+    project: str | None = Field(default=None, pattern=PROJECT_ID, description="File the question under this project")
     source: str = Field(default=SAMPLE, pattern=SOURCE_ID, description="'sample' or one of your data sources")
     interactive: bool = Field(default=False, description="Pause and ask when a business term is ambiguous")
     fresh: bool = Field(default=False, description="Run the agent even if a saved answer exists")
@@ -79,6 +114,7 @@ class ConnectorAskRequest(BaseModel):
 
 class KeyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80, description="What the key is for, e.g. 'Sales sheet'")
+    days: int | None = Field(default=90, ge=1, le=730, description="Days until the key stops working; null for never")
 
 
 class PasswordChange(BaseModel):
@@ -98,6 +134,7 @@ class RoleChange(BaseModel):
 class SignInRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
+    code: str | None = Field(default=None, max_length=20, description="Authenticator or recovery code, if asked")
 
 
 class ResumeRequest(BaseModel):
@@ -125,6 +162,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     store, limits = SecurityStore(security_db), limits or Limits.from_env()
     answers = AnswerStore(store.path)  # same database file: it is the volume that survives deploys
     sources = SourceStore(store.path, sources_dir)
+    projects = ProjectStore(store.path)
     runtime = SourceRuntime(sources)
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
     live_dir = Path(live_traces_dir or os.environ.get("LIVE_TRACES_DIR") or traces_dir)
@@ -144,6 +182,23 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 await runtime.close_all()  # the query processes of users' sources
 
     app = FastAPI(title="Analyst Console API", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        """Headers that tell browsers to refuse framing, sniffing and outside scripts, on every response."""
+        response = await call_next(request)
+        headers = response.headers
+        headers.setdefault("X-Content-Type-Options", "nosniff")
+        headers.setdefault("X-Frame-Options", "DENY")
+        headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        if request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https":
+            headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        if request.url.path.startswith("/api/"):
+            headers.setdefault("Cache-Control", "no-store")  # answers and keys never sit in a shared cache
+        return response
 
     @app.middleware("http")
     async def require_sign_in(request: Request, call_next):
@@ -181,10 +236,13 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @app.post("/api/auth/login")
     async def sign_in(body: SignInRequest, request: Request, response: Response) -> dict:
+        ip, agent = client_of(request)
         try:
-            token = store.sign_in(body.name, body.password)
+            token = store.sign_in(body.name, body.password, body.code, ip, agent)
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
+        except TwoFactorRequired as exc:
+            return JSONResponse({"detail": str(exc), "two_factor": True}, status_code=401)
         if token is None:
             raise HTTPException(401, "Wrong name or password.")
         https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
@@ -205,7 +263,56 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         account = store.account(user) if auth and user else None
         return {"user": user, "auth": auth, "usage": store.usage(user, limits) if user else None,
                 "role": account["role"] if account else ("admin" if user == "local" else None),
-                "must_change_password": bool(account and account["must_change"])}
+                "must_change_password": bool(account and account["must_change"]),
+                "two_factor": bool(account and store.two_factor_on(user))}
+
+    # ---- security: sessions, activity, two-step sign-in --------------------------------------
+
+    @app.get("/api/account/sessions")
+    async def list_sessions(request: Request) -> list[dict]:
+        browser_only(request)
+        return store.sessions(request.state.user, request.cookies.get(SESSION_COOKIE))
+
+    @app.delete("/api/account/sessions/{session_id}")
+    async def end_session(session_id: str, request: Request) -> dict:
+        browser_only(request)
+        ended = store.end_sessions(request.state.user, session_id, keep=request.cookies.get(SESSION_COOKIE))
+        if not ended:
+            raise HTTPException(404, "No other session with that id (sign out of this one from the menu).")
+        return {"ended": ended}
+
+    @app.post("/api/account/sessions/end-others")
+    async def end_other_sessions(request: Request) -> dict:
+        browser_only(request)
+        ended = store.end_sessions(request.state.user, keep=request.cookies.get(SESSION_COOKIE))
+        store.record(request.state.user, "signed out other sessions", *client_of(request))
+        return {"ended": ended}
+
+    @app.get("/api/account/activity")
+    async def activity(request: Request) -> list[dict]:
+        browser_only(request)
+        return store.events(request.state.user)
+
+    @app.post("/api/account/2fa/start")
+    async def start_two_factor(request: Request) -> dict:
+        """A new authenticator secret (shown once), not active until confirmed with a code."""
+        browser_only(request)
+        return store.start_two_factor(request.state.user)
+
+    @app.post("/api/account/2fa/confirm")
+    async def confirm_two_factor(body: TwoFactorCode, request: Request) -> dict:
+        browser_only(request)
+        codes = store.finish_two_factor(request.state.user, body.code)
+        if codes is None:
+            raise HTTPException(422, "That code does not match. Check the time on your phone and try the next code.")
+        return {"recovery_codes": codes}
+
+    @app.post("/api/account/2fa/stop")
+    async def stop_two_factor(body: PasswordOnly, request: Request) -> dict:
+        browser_only(request)
+        if not store.stop_two_factor(request.state.user, body.password):
+            raise HTTPException(403, "The password is not right.")
+        return {"two_factor": False}
 
     @app.post("/api/account/password")
     async def change_password(body: PasswordChange, request: Request, response: Response) -> dict:
@@ -218,7 +325,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             raise HTTPException(422, str(exc)) from exc
         if not changed:
             raise HTTPException(403, "The current password is not right.")
-        token = store.sign_in(user, body.new)
+        store.record(user, "changed password", *client_of(request))
+        token = store.issue_session(user, *client_of(request))
         https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
         response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True,
                             samesite="lax", secure=https, path="/")
@@ -304,9 +412,40 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return found
 
     @app.get("/api/history")
-    async def history(request: Request) -> list[dict]:
-        """The signed-in user's recent questions, newest first."""
-        return store.history(request.state.user, limit=50)
+    async def history(request: Request, project: str | None = None, limit: int = 50) -> list[dict]:
+        """The signed-in user's recent questions, newest first; `project` narrows them ("none": unfiled)."""
+        return store.history(request.state.user, limit=max(1, min(limit, 200)), project=project)
+
+    def own_project(request: Request, project_id: str) -> dict:
+        try:
+            return projects.get(request.state.user, project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "No project of yours has that id.") from exc
+
+    @app.get("/api/projects")
+    async def list_projects(request: Request) -> list[dict]:
+        return projects.list(request.state.user)
+
+    @app.post("/api/projects")
+    async def create_project(body: ProjectRequest, request: Request) -> dict:
+        try:
+            return projects.create(request.state.user, body.name, body.source)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.patch("/api/projects/{project_id}")
+    async def change_project(project_id: str, body: ProjectChange, request: Request) -> dict:
+        own_project(request, project_id)
+        try:
+            return projects.update(request.state.user, project_id, body.name, body.source)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}")
+    async def remove_project(project_id: str, request: Request) -> dict:
+        own_project(request, project_id)
+        projects.remove(request.state.user, project_id)
+        return {"removed": project_id}
 
     def model():
         if "model" not in state:
@@ -391,7 +530,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 event = {**event, "reused": True}
             yield event
 
-    async def ask_events(user: str, question: str, interactive: bool, fresh: bool, source: str = SAMPLE):
+    async def ask_events(user: str, question: str, interactive: bool, fresh: bool, source: str = SAMPLE,
+                         project: str | None = None):
         """The saved answer, or a new logged run. Raises LimitReached (or LookupError for a source that is
         missing or not ready) before anything is spent.
 
@@ -401,10 +541,10 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         if not fresh:
             saved = answers.find(question, interactive, await current_data_version(user, source), source)
             if saved:
-                store.log_reused(user, question, saved["trace_id"], source)
+                store.log_reused(user, question, saved["trace_id"], source, project)
                 return saved_events(saved)
         thread_id = uuid.uuid4().hex
-        question_id = store.start_question(user, question, limits, thread_id, source)
+        question_id = store.start_question(user, question, limits, thread_id, source, project)
         stream = stream_trace(source_graph, question, thread_id=thread_id, interactive=interactive)
         return run_events(question, thread_id, stream, [], question_id, interactive, user, source)
 
@@ -441,7 +581,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     async def create_key(body: KeyRequest, request: Request) -> dict:
         """The new key, shown this once: only a hash of it is kept."""
         browser_only(request)
-        return store.create_key(request.state.user, body.name)
+        return store.create_key(request.state.user, body.name, body.days)
 
     @app.delete("/api/keys/{prefix}")
     async def revoke_key(prefix: str, request: Request) -> dict:
@@ -478,7 +618,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     add_source_routes(app, sources, runtime)
 
     @app.get("/api/evals")
-    async def evals() -> list[dict]:
+    async def evals(request: Request) -> list[dict]:
+        admin_only(request)
         from evals.report import aggregate, load_records
 
         runs = []
@@ -492,7 +633,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         return runs
 
     @app.get("/api/evals/{file_name}/{question_id}")
-    async def eval_question(file_name: str, question_id: str) -> list[dict]:
+    async def eval_question(file_name: str, question_id: str, request: Request) -> list[dict]:
+        admin_only(request)
         from evals.report import load_records
 
         path = results_dir / file_name
@@ -520,9 +662,12 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
 
     @app.post("/api/ask")
     async def ask(request: AskRequest, http: Request) -> StreamingResponse:
+        if request.project:
+            own_project(http, request.project)
+            projects.touch(request.project)
         try:
             events = await ask_events(http.state.user, request.question, request.interactive, request.fresh,
-                                      request.source)
+                                      request.source, request.project)
         except LimitReached as exc:
             raise HTTPException(429, str(exc)) from exc
         except LookupError as exc:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -30,6 +31,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app import crypto
+from app.api import twofactor
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = REPO_ROOT / "checkpoints" / "console.sqlite"
 SESSION_COOKIE = "analyst_session"
@@ -40,6 +44,11 @@ FAILED_LOGIN_WINDOW_S = 15 * 60
 SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 ROLES = ("user", "admin")  # admins invite people, reset passwords and remove accounts
 USER_NAME = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
+SEEN_EVERY_S = 60  # how often a session's "last seen" is written, to keep reads cheap
+# Passwords people pick first; refused whatever their length.
+COMMON_PASSWORDS = {"password", "password1", "password123", "1234567890", "12345678910", "qwertyuiop",
+                    "iloveyou12", "letmein123", "welcome123", "changeme12", "administrator", "abcdefghij",
+                    "passw0rd12", "0123456789", "1q2w3e4r5t", "qwerty1234", "football12", "monkey1234"}
 
 SCHEMA = """
 create table if not exists users (
@@ -53,10 +62,17 @@ create table if not exists questions (
     tokens integer not null default 0, trace_id text, thread_id text);
 create index if not exists questions_by_day on questions (day);
 create index if not exists questions_by_user on questions (user_name, asked_at);
+create table if not exists auth_events (
+    user_name text not null, at real not null, kind text not null, ip text, user_agent text);
+create index if not exists auth_events_by_user on auth_events (user_name, at);
 create table if not exists api_keys (
     key_hash text primary key, prefix text not null unique, user_name text not null, name text not null,
     created_at real not null, last_used_at real);
 """
+
+
+class TwoFactorRequired(Exception):
+    """The password was right, but this account also needs the code from its authenticator app."""
 
 
 class LimitReached(Exception):
@@ -72,6 +88,18 @@ class Limits:
     def from_env(cls) -> Limits:
         return cls(daily_tokens=int(os.environ.get("DAILY_TOKEN_BUDGET", cls.daily_tokens)),
                    questions_per_hour=int(os.environ.get("QUESTIONS_PER_HOUR", cls.questions_per_hour)))
+
+
+def password_problem(name: str, password: str) -> str | None:
+    """Why a new password is too weak, or None."""
+    if len(password) < 10:
+        return "Use a password of at least 10 characters."
+    lowered = password.lower()
+    if lowered in COMMON_PASSWORDS or len(set(lowered)) < 4:
+        return "That password is too easy to guess. A short sentence works well."
+    if name and len(name) >= 3 and name.lower() in lowered:
+        return "Leave your name out of your password."
+    return None
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -102,6 +130,7 @@ class SecurityStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = Path(path or os.environ.get("CONSOLE_DB") or DEFAULT_DB)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.key_file = self.path.parent / ".console_key"  # for two-step sign-in secrets (see app/crypto.py)
         with self._db() as db:
             db.executescript(SCHEMA)
             self._migrate(db)
@@ -118,8 +147,16 @@ class SecurityStore:
             db.execute("alter table users add column role text not null default 'user'")
         if "must_change" not in columns:
             db.execute("alter table users add column must_change integer not null default 0")
-        if "source" not in {row["name"] for row in db.execute("pragma table_info(questions)")}:
-            db.execute("alter table questions add column source text not null default 'sample'")
+        for table, column, definition in (
+            ("questions", "source", "text not null default 'sample'"),
+            ("questions", "project", "text"),
+            ("sessions", "created_at", "real"), ("sessions", "last_seen", "real"),
+            ("sessions", "ip", "text"), ("sessions", "user_agent", "text"),
+            ("users", "totp_secret", "text"), ("users", "totp_pending", "text"), ("users", "recovery", "text"),
+            ("api_keys", "expires_at", "real"),
+        ):
+            if column not in {row["name"] for row in db.execute(f"pragma table_info({table})")}:
+                db.execute(f"alter table {table} add column {column} {definition}")
         if not db.execute("select 1 from users where role = 'admin'").fetchone():
             db.execute("update users set role = 'admin' where name = "
                        "(select name from users order by created_at limit 1)")
@@ -144,8 +181,9 @@ class SecurityStore:
         """
         if not USER_NAME.match(name):
             raise ValueError("Use 1 to 40 letters, digits, dots, dashes or underscores for the name.")
-        if len(password) < 10:
-            raise ValueError("Use a password of at least 10 characters.")
+        problem = password_problem(name, password)
+        if problem:
+            raise ValueError(problem)
         if role is not None and role not in ROLES:
             raise ValueError(f"The role must be one of {', '.join(ROLES)}.")
         with self._db() as db:
@@ -223,32 +261,88 @@ class SecurityStore:
 
     # ---- sessions ------------------------------------------------------------------------
 
-    def sign_in(self, name: str, password: str) -> str | None:
-        """A new session token, or None. Repeated failures lock the name for a while."""
+    def record(self, user: str, kind: str, ip: str = "", user_agent: str = "") -> None:
+        """Account activity a user can review: sign-ins, failures, password and two-step changes."""
+        with self._db() as db:
+            db.execute("insert into auth_events values (?, ?, ?, ?, ?)", (user, time.time(), kind, ip, user_agent[:200]))
+            db.execute("delete from auth_events where at < ?", (time.time() - 90 * 86400,))  # keep 90 days
+
+    def events(self, user: str, limit: int = 30) -> list[dict]:
+        with self._db() as db:
+            rows = db.execute("select at, kind, ip, user_agent from auth_events where user_name = ? "
+                              "order by at desc limit ?", (user, limit))
+            return [dict(row) for row in rows]
+
+    def sign_in(self, name: str, password: str, code: str | None = None, ip: str = "", user_agent: str = "") -> str | None:
+        """A new session token, or None. Repeated failures lock the name for a while.
+
+        With two-step sign-in on, a right password without a right code raises TwoFactorRequired; the
+        code can also be one of the account's recovery codes, which then stops working.
+        """
         now = time.time()
         with self._db() as db:
             recent = db.execute("select count(*) from failed_logins where user_name = ? and at > ?",
                                 (name, now - FAILED_LOGIN_WINDOW_S)).fetchone()[0]
             if recent >= FAILED_LOGINS_ALLOWED:
                 raise LimitReached("Too many failed sign-ins. Try again in 15 minutes.")
-            row = db.execute("select password_hash from users where name = ?", (name,)).fetchone()
+            row = db.execute("select password_hash, totp_secret, recovery from users where name = ?", (name,)).fetchone()
             # Hash even for an unknown name, so the response time does not reveal which names exist.
             valid = check_password(password, row["password_hash"] if row else hash_password("x"))
             if not (row and valid):
                 db.execute("insert into failed_logins values (?, ?)", (name, now))
-                return None
+        if not (row and valid):
+            if row:
+                self.record(name, "failed sign-in", ip, user_agent)
+            return None
+        if row["totp_secret"]:
+            if not code:
+                raise TwoFactorRequired("Enter the 6-digit code from your authenticator app.")
+            if not self._second_step(name, row, code):
+                with self._db() as db:
+                    db.execute("insert into failed_logins values (?, ?)", (name, now))
+                self.record(name, "wrong two-step code", ip, user_agent)
+                raise TwoFactorRequired("That code is not right. Codes change every 30 seconds.")
+        with self._db() as db:
             db.execute("delete from failed_logins where user_name = ?", (name,))
             db.execute("delete from sessions where expires_at < ?", (now,))
             token = secrets.token_urlsafe(32)
-            db.execute("insert into sessions values (?, ?, ?)", (_token_hash(token), name, now + SESSION_HOURS * 3600))
-            return token
+            db.execute("insert into sessions (token_hash, user_name, expires_at, created_at, last_seen, ip, user_agent) "
+                       "values (?, ?, ?, ?, ?, ?, ?)",
+                       (_token_hash(token), name, now + SESSION_HOURS * 3600, now, now, ip, user_agent[:200]))
+        self.record(name, "signed in", ip, user_agent)
+        return token
+
+    def issue_session(self, name: str, ip: str = "", user_agent: str = "") -> str:
+        """A session for someone already verified (e.g. right after changing their password)."""
+        now, token = time.time(), secrets.token_urlsafe(32)
+        with self._db() as db:
+            db.execute("insert into sessions (token_hash, user_name, expires_at, created_at, last_seen, ip, user_agent) "
+                       "values (?, ?, ?, ?, ?, ?, ?)",
+                       (_token_hash(token), name, now + SESSION_HOURS * 3600, now, now, ip, user_agent[:200]))
+        return token
+
+    def _second_step(self, name: str, row: sqlite3.Row, code: str) -> bool:
+        if twofactor.check_code(crypto.unseal(row["totp_secret"], self.key_file), code):
+            return True
+        remaining = json.loads(row["recovery"] or "[]")
+        hashed = twofactor.hash_code(code)
+        if hashed in remaining:  # a recovery code works once
+            remaining.remove(hashed)
+            with self._db() as db:
+                db.execute("update users set recovery = ? where name = ?", (json.dumps(remaining), name))
+            self.record(name, "used a recovery code")
+            return True
+        return False
 
     def user_for(self, token: str | None) -> str | None:
         if not token:
             return None
+        now = time.time()
         with self._db() as db:
-            row = db.execute("select user_name from sessions where token_hash = ? and expires_at > ?",
-                             (_token_hash(token), time.time())).fetchone()
+            row = db.execute("select user_name, last_seen from sessions where token_hash = ? and expires_at > ?",
+                             (_token_hash(token), now)).fetchone()
+            if row and (row["last_seen"] or 0) < now - SEEN_EVERY_S:
+                db.execute("update sessions set last_seen = ? where token_hash = ?", (now, _token_hash(token)))
             return row["user_name"] if row else None
 
     def sign_out(self, token: str | None) -> None:
@@ -256,29 +350,91 @@ class SecurityStore:
             with self._db() as db:
                 db.execute("delete from sessions where token_hash = ?", (_token_hash(token),))
 
+    def sessions(self, user: str, current: str | None = None) -> list[dict]:
+        """Where this account is signed in. Ids are a short part of the stored hash, never the cookie."""
+        current_hash = _token_hash(current) if current else None
+        with self._db() as db:
+            rows = db.execute("select token_hash, created_at, last_seen, ip, user_agent from sessions "
+                              "where user_name = ? and expires_at > ? order by last_seen desc", (user, time.time()))
+            return [{"id": r["token_hash"][:16], "created_at": r["created_at"], "last_seen": r["last_seen"],
+                     "ip": r["ip"], "user_agent": r["user_agent"], "current": r["token_hash"] == current_hash}
+                    for r in rows]
+
+    def end_sessions(self, user: str, session_id: str | None = None, keep: str | None = None) -> int:
+        """Sign out one session (by id), or every session except `keep` (the one asking)."""
+        keep_hash = _token_hash(keep) if keep else ""
+        with self._db() as db:
+            if session_id:
+                return db.execute("delete from sessions where user_name = ? and substr(token_hash, 1, 16) = ? "
+                                  "and token_hash != ?", (user, session_id, keep_hash)).rowcount
+            return db.execute("delete from sessions where user_name = ? and token_hash != ?", (user, keep_hash)).rowcount
+
+    # ---- two-step sign-in -------------------------------------------------------------------
+
+    def two_factor_on(self, user: str) -> bool:
+        with self._db() as db:
+            row = db.execute("select totp_secret from users where name = ?", (user,)).fetchone()
+            return bool(row and row["totp_secret"])
+
+    def start_two_factor(self, user: str) -> dict:
+        """A new secret, waiting for a first right code before it counts."""
+        secret = twofactor.new_secret()
+        with self._db() as db:
+            db.execute("update users set totp_pending = ? where name = ?", (crypto.seal(secret, self.key_file), user))
+        return {"secret": secret, "uri": twofactor.setup_uri(secret, user)}
+
+    def finish_two_factor(self, user: str, code: str) -> list[str] | None:
+        """Turn it on if the code matches the pending secret; returns the recovery codes, shown once."""
+        with self._db() as db:
+            row = db.execute("select totp_pending from users where name = ?", (user,)).fetchone()
+        if not row or not row["totp_pending"]:
+            return None
+        if not twofactor.check_code(crypto.unseal(row["totp_pending"], self.key_file), code):
+            return None
+        codes = twofactor.recovery_codes()
+        with self._db() as db:
+            db.execute("update users set totp_secret = totp_pending, totp_pending = null, recovery = ? where name = ?",
+                       (json.dumps([twofactor.hash_code(c) for c in codes]), user))
+        self.record(user, "turned on two-step sign-in")
+        return codes
+
+    def stop_two_factor(self, user: str, password: str) -> bool:
+        with self._db() as db:
+            row = db.execute("select password_hash from users where name = ?", (user,)).fetchone()
+        if not row or not check_password(password, row["password_hash"]):
+            return False
+        with self._db() as db:
+            db.execute("update users set totp_secret = null, totp_pending = null, recovery = null where name = ?", (user,))
+        self.record(user, "turned off two-step sign-in")
+        return True
+
     # ---- API keys --------------------------------------------------------------------------
 
-    def create_key(self, user: str, name: str) -> dict:
-        """A new key for `user`. The full key is returned only here; only its hash is stored."""
+    def create_key(self, user: str, name: str, days: int | None = None) -> dict:
+        """A new key for `user`, optionally expiring after `days`. Returned in full only here; only its hash is kept."""
         secret = API_KEY_PREFIX + secrets.token_urlsafe(32)
         prefix = secret[: len(API_KEY_PREFIX) + 8]  # enough to tell keys apart in a list, useless to sign in
+        expires = time.time() + days * 86400 if days else None
         with self._db() as db:
-            db.execute("insert into api_keys values (?, ?, ?, ?, ?, null)",
-                       (_token_hash(secret), prefix, user, name.strip() or "Unnamed key", time.time()))
-        return {"key": secret, "prefix": prefix, "name": name}
+            db.execute("insert into api_keys (key_hash, prefix, user_name, name, created_at, last_used_at, expires_at) "
+                       "values (?, ?, ?, ?, ?, null, ?)",
+                       (_token_hash(secret), prefix, user, name.strip() or "Unnamed key", time.time(), expires))
+        self.record(user, f"created API key {prefix}…")
+        return {"key": secret, "prefix": prefix, "name": name, "expires_at": expires}
 
     def user_for_key(self, key: str | None) -> str | None:
         if not key or not key.startswith(API_KEY_PREFIX):
             return None
         with self._db() as db:
-            row = db.execute("select user_name from api_keys where key_hash = ?", (_token_hash(key),)).fetchone()
+            row = db.execute("select user_name from api_keys where key_hash = ? and (expires_at is null or expires_at > ?)",
+                             (_token_hash(key), time.time())).fetchone()
             if row:
                 db.execute("update api_keys set last_used_at = ? where key_hash = ?", (time.time(), _token_hash(key)))
             return row["user_name"] if row else None
 
     def keys(self, user: str) -> list[dict]:
         with self._db() as db:
-            rows = db.execute("select prefix, name, created_at, last_used_at from api_keys where user_name = ? "
+            rows = db.execute("select prefix, name, created_at, last_used_at, expires_at from api_keys where user_name = ? "
                               "order by created_at desc", (user,))
             return [dict(row) for row in rows]
 
@@ -297,7 +453,8 @@ class SecurityStore:
             raise LimitReached(f"Today's budget of {limits.daily_tokens:,} model tokens is used up. "
                                "Live questions start again at midnight UTC; saved runs still replay.")
 
-    def start_question(self, user: str, question: str, limits: Limits, thread_id: str, source: str = "sample") -> int:
+    def start_question(self, user: str, question: str, limits: Limits, thread_id: str, source: str = "sample",
+                       project: str | None = None) -> int:
         """Check the limits, then log the question. Raises LimitReached before anything is spent."""
         now = time.time()
         self.check_budget(limits)
@@ -307,14 +464,17 @@ class SecurityStore:
             if asked >= limits.questions_per_hour:
                 raise LimitReached(f"You have asked {asked} questions in the last hour, the limit is "
                                    f"{limits.questions_per_hour}. Try again a little later.")
-            return db.execute("insert into questions (user_name, question, asked_at, day, thread_id, source) "
-                              "values (?, ?, ?, ?, ?, ?)", (user, question, now, today(), thread_id, source)).lastrowid
+            return db.execute("insert into questions (user_name, question, asked_at, day, thread_id, source, project) "
+                              "values (?, ?, ?, ?, ?, ?, ?)",
+                              (user, question, now, today(), thread_id, source, project)).lastrowid
 
-    def log_reused(self, user: str, question: str, trace_id: str | None, source: str = "sample") -> None:
+    def log_reused(self, user: str, question: str, trace_id: str | None, source: str = "sample",
+                   project: str | None = None) -> None:
         """A saved answer was shown again: logged, but it spent nothing and counts against no limit."""
         with self._db() as db:
-            db.execute("insert into questions (user_name, question, asked_at, day, status, trace_id, source) "
-                       "values (?, ?, ?, ?, 'reused', ?, ?)", (user, question, time.time(), today(), trace_id, source))
+            db.execute("insert into questions (user_name, question, asked_at, day, status, trace_id, source, project) "
+                       "values (?, ?, ?, ?, 'reused', ?, ?, ?)",
+                       (user, question, time.time(), today(), trace_id, source, project))
 
     def recent_questions(self, limit: int = 500, source: str = "sample", user: str | None = None) -> list[str]:
         """Questions that got an answer, newest first, for suggestions.
@@ -347,10 +507,19 @@ class SecurityStore:
                 "tokens_left": max(limits.daily_tokens - used, 0),
                 "questions_last_hour": asked, "questions_per_hour": limits.questions_per_hour}
 
-    def history(self, user: str | None = None, limit: int = 50) -> list[dict]:
+    def history(self, user: str | None = None, limit: int = 50, project: str | None = None) -> list[dict]:
+        """Newest first; with `project`, only that project's questions ("none" for questions in no project)."""
+        clauses, values = [], []
+        if user:
+            clauses.append("user_name = ?")
+            values.append(user)
+        if project == "none":
+            clauses.append("project is null")
+        elif project:
+            clauses.append("project = ?")
+            values.append(project)
+        where = ("where " + " and ".join(clauses) + " ") if clauses else ""
         with self._db() as db:
-            rows = db.execute(
-                "select user_name, question, asked_at, status, tokens, trace_id, source from questions "
-                + ("where user_name = ? " if user else "") + "order by asked_at desc limit ?",
-                (user, limit) if user else (limit,))
+            rows = db.execute("select user_name, question, asked_at, status, tokens, trace_id, source, project "
+                              f"from questions {where}order by asked_at desc limit ?", (*values, limit))
             return [dict(row) for row in rows]

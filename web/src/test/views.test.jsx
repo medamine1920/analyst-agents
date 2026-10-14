@@ -56,12 +56,10 @@ test("metrics view lists every governed metric and filters by search", async () 
   expect(screen.getByText(/No metric matches/)).toBeTruthy();
 });
 
-test("ask view replays a saved run: answer, check badge and every step", async () => {
-  render(<Ask />);
-  const select = await screen.findByLabelText(/Saved runs replay/);
-  await waitFor(() => expect(select.querySelectorAll("option").length).toBe(2));
-  fireEvent.change(select, { target: { value: trace.id } });
+test("an earlier run opens on the ask page itself: answer, check badge and every step", async () => {
+  render(<Ask params={{ trace: trace.id }} />);
   expect(await screen.findByRole("heading", { name: trace.question })).toBeTruthy();
+  expect(screen.queryByText(/Replay a saved run/)).toBeNull(); // one page: no separate replay mode
   expect(screen.getByText(/every number in this answer comes from the computed results/)).toBeTruthy();
   for (const title of ["Check business terms", "Plan the queries", "Run the queries", "Compute the numbers", "Write the answer"]) {
     expect(screen.getByText(title)).toBeTruthy();
@@ -111,8 +109,7 @@ test("a live question pauses on an ambiguous term and resumes with the chosen de
   });
 
   render(<Ask />);
-  fireEvent.click(screen.getByRole("radio", { name: "Ask the agent live" }));
-  fireEvent.change(screen.getByLabelText(/Ask about orders/), { target: { value: "Which store had the higher income?" } });
+  fireEvent.change(screen.getByLabelText("Your question"), { target: { value: "Which store had the higher income?" } });
   fireEvent.click(screen.getByRole("button", { name: "Ask" }));
 
   expect(await screen.findByText(/has several definitions. Which one do you mean/)).toBeTruthy();
@@ -156,9 +153,10 @@ test("the console asks for sign-in, then shows the account and today's budget", 
 
   fireEvent.change(screen.getByLabelText("Password"), { target: { value: "correct horse battery" } });
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-  expect(await screen.findByText("145,750 model tokens left today")).toBeTruthy();
-  expect(screen.getByText("ana")).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Ask" })).toBeTruthy();
+  expect(await screen.findByRole("link", { name: "+ New question" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "ana" })).toBeTruthy();
+  expect(screen.queryByText(/tokens left today/)).toBeNull(); // the budget lives in Settings, not on every page
+  expect(screen.queryByRole("link", { name: /Evaluations/ })).toBeNull(); // a development page, not in the menu
   expect(posts[0][1]).toEqual({ name: "ana", password: "wrong password!" });
 });
 
@@ -179,8 +177,11 @@ test("a repeated question shows the saved answer, and Ask again runs it fresh", 
   });
 
   render(<Ask />);
-  fireEvent.click(screen.getByRole("radio", { name: "Ask the agent live" }));
-  // Suggestions: the question was asked before and has a saved answer.
+  // Nothing is suggested until the user starts typing.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(screen.queryByText("Asked before")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Your question"), { target: { value: "Which st" } });
+  // Then: the question was asked before and has a saved answer.
   const suggestion = await screen.findByRole("button", { name: /asked 3 times/ });
   expect(screen.getByText("saved answer, no tokens")).toBeTruthy();
   fireEvent.click(suggestion); // fills the question box
@@ -266,8 +267,7 @@ test("an invited user must choose a password before anything else, then sees the
   fireEvent.change(screen.getByLabelText("New password"), { target: { value: "bob's own password" } });
   fireEvent.change(screen.getByLabelText("New password again"), { target: { value: "bob's own password" } });
   fireEvent.click(screen.getByRole("button", { name: "Change password" }));
-  expect(await screen.findByRole("link", { name: "Ask" })).toBeTruthy();
-  expect(screen.queryByRole("link", { name: "Admin" })).toBeNull(); // bob is not an admin
+  expect(await screen.findByRole("link", { name: "+ New question" })).toBeTruthy();
   expect(posts[0]).toEqual(["/api/account/password", { current: "temporary1", new: "bob's own password" }]);
 });
 
@@ -315,4 +315,47 @@ test("data sources: a CSV upload shows as building, then ready with its tables a
   expect(screen.getByText(/8 metrics/)).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "Connect a live database" }));
   expect(screen.getByText(/never written to/)).toBeTruthy();
+});
+
+test("settings: people and developer pages are for admins; two-step sign-in shows a key to scan once", async () => {
+  const { default: Settings } = await import("../views/Settings");
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (url === "/api/account/2fa/start") {
+      return { ok: true, json: async () => ({ secret: "JBSWY3DPEHPK3PXP", uri: "otpauth://totp/Analyst%20Console:ana?secret=JBSWY3DPEHPK3PXP" }) };
+    }
+    return { ok: true, json: async () => [] };
+  });
+  const user = { user: "bob", role: "user", two_factor: false, usage: { tokens_left: 1, daily_tokens: 2, questions_last_hour: 0, questions_per_hour: 30 } };
+  const { unmount } = render(<Settings session={user} params={{ tab: "security" }} />);
+  expect(screen.queryByRole("link", { name: /People/ })).toBeNull();
+  expect(screen.queryByRole("link", { name: /Developer/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Turn on two-step sign-in" }));
+  expect(await screen.findByText("JBSWY3DPEHPK3PXP")).toBeTruthy();
+  expect(await screen.findByAltText(/QR code/)).toBeTruthy();
+  unmount();
+  render(<Settings session={{ ...user, role: "admin" }} params={{ tab: "usage" }} />);
+  expect(screen.getByRole("link", { name: /People/ })).toBeTruthy();
+  expect(screen.getByRole("link", { name: /Developer/ })).toBeTruthy();
+  expect(screen.getByText(/questions in the last hour/)).toBeTruthy();
+});
+
+test("the sidebar creates a project and lists recent questions", async () => {
+  const { default: Sidebar } = await import("../components/Sidebar");
+  let projects = [];
+  const recent = [{ question: "Which store had the higher income?", asked_at: 1, trace_id: "t-1" }];
+  globalThis.fetch = vi.fn(async (url, options) => {
+    if (url === "/api/projects" && options?.method === "POST") {
+      projects = [{ id: "abcdef1234", name: JSON.parse(options.body).name, questions: 0 }];
+      return { ok: true, json: async () => projects[0] };
+    }
+    if (url === "/api/projects") return { ok: true, json: async () => projects };
+    return { ok: true, json: async () => recent };
+  });
+  render(<Sidebar route={{ view: "ask", params: {} }} session={{ auth: true, user: "ana" }} onSignOut={() => {}} />);
+  expect(await screen.findByRole("link", { name: "Which store had the higher income?" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "New project" }));
+  fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "Q3 review" } });
+  fireEvent.submit(screen.getByLabelText("New project name").closest("form"));
+  expect(await screen.findByRole("link", { name: /Q3 review/ })).toBeTruthy();
+  expect(window.location.hash).toBe("#ask?project=abcdef1234");
 });

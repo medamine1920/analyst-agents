@@ -186,6 +186,9 @@ def _accumulator(measure: dict, fields: dict[str, str], prefix: str) -> tuple[di
         if agg in ("sum", "count"):
             return {"$sum": value}, None
         raise CannotTranslate(f"the measure {measure['name']} aggregates a constant with {agg}")
+    product = re.fullmatch(r"([A-Za-z_]\w*) \* ([A-Za-z_]\w*)", expr)  # e.g. quantity * price
+    if product and agg == "sum":
+        return {"$sum": {"$multiply": [_field(fields, product[1], prefix), _field(fields, product[2], prefix)]}}, None
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
         raise CannotTranslate(f"the measure {measure['name']} is a SQL expression ({expr}), which has no exact "
                               "MongoDB equivalent; use a SQL translation")

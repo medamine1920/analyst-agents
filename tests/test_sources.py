@@ -224,3 +224,59 @@ def test_a_table_the_account_cannot_read_is_skipped_not_fatal(tmp_path, monkeypa
     assert result["ok"], result
     assert [t["name"] for t in result["tables"]] == ["orders"]
     assert "notes was skipped: permission denied for table notes" in result["notes"]
+
+
+@pytest.mark.integration
+def test_a_csv_with_mixed_line_endings_still_builds(tmp_path):
+    """Reproduces a file whose header ends in LF and rows in CRLF (edited in two programs): DuckDB could
+    not detect its format and the source failed."""
+    import subprocess
+    import sys
+
+    store = SourceStore(tmp_path / "console.sqlite", tmp_path / "sources")
+    content = b"region,amount\n" + b"North,3\r\nSouth,4\r\n"
+    source = store.add_csv("ana", "Mixed", [("mixed.csv", content)])
+    folder = tmp_path / "sources" / source["id"]
+    subprocess.run([sys.executable, "-m", "app.sources.build", str(folder)], check=False, capture_output=True)
+    result = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert result["ok"], result.get("error")
+
+
+def test_sales_columns_get_the_measures_an_analyst_expects():
+    table = Table("sales", "raw.sales", "Sales", [
+        Column("order_id", "BIGINT"), Column("order_date", "DATE"), Column("customer_id", "VARCHAR"),
+        Column("region", "VARCHAR", 3), Column("quantity", "BIGINT"), Column("unit_price", "DOUBLE"),
+        Column("amount", "DOUBLE"), Column("cost", "DOUBLE"), Column("discount", "DOUBLE"),
+        Column("rating", "DOUBLE"), Column("zip_code", "BIGINT", 40), Column("year_data", "BIGINT", 3)])
+    layer, _ = semantic_layer([table])
+    metrics = {m["name"]: m for m in layer["metrics"]}
+    expected = {"sales_average_order_value", "sales_revenue_per_customer", "sales_units_per_order",
+                "sales_orders_per_customer", "sales_gross_profit", "sales_gross_margin", "sales_discount_rate"}
+    assert expected <= set(metrics)
+    assert metrics["sales_average_order_value"]["type_params"] == {
+        "numerator": "sales_amount_total", "denominator": "sales_order_id_distinct"}
+    assert "Total amount divided by the number of orders" in metrics["sales_average_order_value"]["description"]
+    assert metrics["sales_gross_profit"]["type_params"]["expr"] == "sales_amount_total - sales_cost_total"
+    # Prices and ratings are averaged, never summed; codes and years are breakdowns, not numbers.
+    assert "sales_unit_price_total" not in metrics and "sales_unit_price_average" in metrics
+    assert "sales_rating_total" not in metrics and "sales_rating_average" in metrics
+    assert not any(name.startswith(("sales_zip_code", "sales_year_data")) for name in metrics)
+    dimensions = [d["name"] for d in layer["semantic_models"][0]["dimensions"]]
+    assert "zip_code" in dimensions and "year_data" in dimensions
+    assert list(metrics)[:2] == ["sales_count", "sales_average_order_value"]  # the sales view first
+
+
+def test_revenue_is_quantity_times_price_when_there_is_no_amount_and_rows_are_orders_only_when_named_so():
+    lines = Table("order_lines", "raw.order_lines", "Order lines", [
+        Column("sold_at", "TIMESTAMP"), Column("qty", "INTEGER"), Column("price", "DECIMAL(10,2)")])
+    layer, _ = semantic_layer([lines])
+    metrics = {m["name"]: m for m in layer["metrics"]}
+    measure = next(m for m in layer["semantic_models"][0]["measures"] if m["name"] == "m_order_lines_revenue")
+    assert measure == {"name": "m_order_lines_revenue", "agg": "sum", "expr": "qty * price"}
+    # One row per order line, not per order: without an order id there is no average order value.
+    assert "order_lines_revenue" in metrics and "order_lines_average_order_value" not in metrics
+    orders = Table("orders", "raw.orders", "Orders", [Column("placed_on", "DATE"), Column("total", "DOUBLE")])
+    aov = {m["name"]: m for m in semantic_layer([orders])[0]["metrics"]}["orders_average_order_value"]
+    assert aov["type_params"] == {"numerator": "orders_total_total", "denominator": "orders_count"}
+    events = Table("visits", "raw.visits", "Visits", [Column("day_data", "DATE"), Column("amount", "DOUBLE")])
+    assert "visits_average_order_value" not in {m["name"] for m in semantic_layer([events])[0]["metrics"]}

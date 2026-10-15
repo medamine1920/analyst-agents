@@ -12,6 +12,7 @@ from pathlib import Path
 import duckdb
 import pytest
 import sqlglot
+import yaml
 from mcp import Client
 
 from app.mcp_server.server import server
@@ -114,3 +115,18 @@ def test_the_api_translates_against_the_users_own_tables(tmp_path):
     assert "live" not in result["text"] and "source" not in result["text"]
     with pytest.raises(CannotTranslate):
         translate("cobol", sql, None, folder)
+
+
+def test_a_revenue_measure_of_quantity_times_price_becomes_a_multiplication(tmp_path):
+    from app.sources.profile import Column, Table, model_sql, semantic_layer
+
+    table = Table("lines", "raw.lines", "Lines", [Column("sold_on", "DATE"), Column("qty", "INTEGER"),
+                                                  Column("price", "DOUBLE")])
+    layer, _ = semantic_layer([table])
+    layer.pop("time_dimensions")
+    (tmp_path / "semantic.yml").write_text(yaml.safe_dump(layer), encoding="utf-8")
+    definitions = Definitions([tmp_path / "semantic.yml"], {"lines": model_sql(table, "2026-01-01")})
+    text = to_mongo({"metrics": ["lines_revenue"], "group_by": []}, definitions)
+    assert text.startswith("db.lines.aggregate(")
+    group = json.loads(text[len("db.lines.aggregate("):-1])[0]["$group"]
+    assert group["m_lines_revenue"] == {"$sum": {"$multiply": ["$qty", "$price"]}}

@@ -26,6 +26,7 @@ from app.sources.profile import (
     identifier,
     kind_of,
     model_sql,
+    role_of,
     semantic_layer,
 )
 
@@ -93,8 +94,10 @@ def profile(con: duckdb.DuckDBPyConnection, relation: str, label: str, used: set
     described = con.execute(f"describe select * from {relation}").fetchall()
     names: set[str] = set()
     columns = [Column(name=identifier(row[0], names), type=str(row[1]), source=row[0]) for row in described]
-    # Only text columns need a distinct count: it decides whether they are breakdowns or identifiers.
-    texts = [c for c in columns if kind_of(c) == "group" and c.type.upper().split("(")[0] != "BOOLEAN"]
+    # Text columns and numeric codes (years, zip codes) need a distinct count: it decides whether they
+    # are breakdowns or identifiers.
+    texts = [c for c in columns if c.type.upper().split("(")[0] != "BOOLEAN"
+             and (kind_of(c) == "group" or role_of(c) == "code" and kind_of(c) == "skip")]
     if texts:
         estimates = ", ".join(f"approx_count_distinct({quoted(c.source)})" for c in texts)
         sample = f"(select * from {relation} limit {SAMPLE_ROWS})"

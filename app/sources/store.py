@@ -146,6 +146,9 @@ class SourceStore:
             names.append(safe)
         source = self._new(owner, name, "csv", {"files": names})
         for safe, (_, content) in zip(names, files, strict=True):
+            # One kind of line ending: a file edited in two programs can mix them, and DuckDB then
+            # cannot detect its format at all.
+            content = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
             (self.folder / source["id"] / "files" / safe).write_bytes(content)
         return source
 

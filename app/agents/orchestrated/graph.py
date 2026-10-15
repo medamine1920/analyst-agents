@@ -36,6 +36,7 @@ from app.agents.orchestrated.plan import (
     ensure_drilldown,
     normalize_dates,
     read_choices,
+    repair_names,
     settle_ambiguities,
     validate_plan,
 )
@@ -138,6 +139,8 @@ class AnalystState(TypedDict, total=False):
     choices: dict[str, str]
     # The sales expert's notes for the console: definitions, a chart per result, follow-up questions.
     advice: dict
+    # What the reviewer objected to at each attempt, so a failed answer can be traced back to its drafts.
+    review_log: list[list[str]]
 
 
 def _catalog_text(catalog: dict) -> str:
@@ -217,6 +220,7 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
             if parsed is None:
                 feedback = [error or "The plan could not be parsed."]
                 continue
+            parsed = repair_names(parsed)
             errors = validate_plan(parsed, set(catalog), gateway.cached_dimensions)
             if errors:
                 feedback = errors
@@ -294,9 +298,10 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
         context = await gateway.context()
         issues = review_answer(state["draft"], state["facts"], state["question"],
                                state.get("ambiguities", []), context["catalog"])
+        log = [*state.get("review_log", []), issues]
         if issues and state["write_attempts"] < MAX_WRITE_ATTEMPTS:
-            return {"review_issues": issues}
-        return {"review_issues": issues, "answer": state["draft"]}
+            return {"review_issues": issues, "review_log": log}
+        return {"review_issues": issues, "review_log": log, "answer": state["draft"]}
 
     async def give_up(state: AnalystState) -> dict:
         return {"answer": f"I could not build a valid analysis plan for this question. ({state.get('error', '')})"}

@@ -14,6 +14,9 @@ import re
 from app.text import normalize
 
 NUMBER = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
+# A model can fall into repeating one character until it runs out of tokens (eval m01, 2026-10-15); the
+# answer is then cut off. Table separators repeat dashes too, but never this many.
+DEGENERATE = re.compile(r"(\S)\1{199,}")
 
 
 def numbers_in(text: str) -> list[float]:
@@ -197,6 +200,9 @@ def review_answer(draft: str, facts: dict, question: str, ambiguities: list[dict
         if not any(math.isclose(number, value, rel_tol=0.0015, abs_tol=0.006) for value in allowed):
             unsupported.append(number)
     issues = []
+    if DEGENERATE.search(draft):
+        issues.append("The draft fell into one character repeated hundreds of times and was cut off. "
+                      "Write the whole answer again, shorter, with no repeated characters.")
     if unsupported:
         issues.append(f"These numbers do not appear in the facts: {unsupported}. Use only numbers from the facts.")
     for item in misattributed(draft, facts, question):

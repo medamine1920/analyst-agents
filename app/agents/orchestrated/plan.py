@@ -116,6 +116,26 @@ def is_time_dimension(name: str) -> bool:
     return name.startswith("metric_time") or "_at" in name.split("__")[-1] or name.split("__")[-1] in TIME_GRAINS
 
 
+BARE_GRAIN = re.compile(r"^_*(day|week|month|quarter|year)$")
+
+
+def repair_names(plan: Plan) -> Plan:
+    """Fix names that can only mean one thing: "__month" or "month" is metric_time__month.
+
+    Eval m04 (2026-10-15) failed after three plans that each grouped by "__month": refused every time,
+    though the intent was never in doubt. Anything else is left to validation.
+    """
+    def fixed(name: str) -> str:
+        found = BARE_GRAIN.match(name)
+        return f"metric_time__{found[1]}" if found else name
+
+    for step in plan.steps:
+        step.group_by = [fixed(name) for name in step.group_by]
+        for item in step.filters:
+            item.dimension = fixed(item.dimension)
+    return plan
+
+
 def validate_plan(plan: Plan, metric_names: set[str], dimensions_for) -> list[str]:
     """Return human-readable errors; an empty list means the plan can run."""
     errors, step_ids = [], [step.id for step in plan.steps]

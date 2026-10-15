@@ -40,7 +40,7 @@ mf query --metrics revenue_pre_tax --group-by store__store_name --explain
 
 # Repo root
 ruff check .
-pytest -q                                    # 163 tests (unit + integration)
+pytest -q                                    # 165 tests (unit + integration)
 pytest -q -m "not integration"
 python -m app.agents.orchestrated.graph "<question>"
 python -m app.agents.orchestrated.graph --interactive "<question>"   # asks which definition is meant
@@ -87,6 +87,7 @@ In Git Bash, use forward slashes in paths (`evals/results/<file>.jsonl`).
 | v2 (12 q × 3) | baseline (with harness) | 72% | 67% | 8,260 | 42.9 s |
 | v2 | orchestrated (before the Phase 3C fixes) | 89% | 83% | 4,363 | 28.0 s |
 | v2 | orchestrated (after the fixes, 2026-10-09) | 100% | 100% | 4,670 | 28.4 s |
+| v2 | orchestrated (2026-10-15: sales expert, stricter review, `..._20261015-0905.jsonl`) | 89% | 67% | 5,738 | 36.8 s |
 | v3 held-out (8 q × 3, frozen) | baseline | 83% | 50% | 7,893 | 37.4 s |
 | v3 held-out (frozen) | orchestrated | 88% | 88% | 3,400 | 18.8 s |
 
@@ -114,7 +115,7 @@ Plan agreed on 2026-10-14 (the user asked for saved frequent questions, better s
 4i. **Done and deployed** (up to `2a76a54`; the user confirmed the deploy): a sales-expert agent (`app/agents/sales_expert/`; code, no model, no tokens): `knowledge.yml` holds about 30 sales measures (definition, formula, English and French aliases, which way is good, follow-up questions) and which chart answers which question. It adds what a question's sales words mean to the planner prompt (only when the question uses one), runs as the `advise` step (definitions, a chart per result, follow-ups, shown under the answer as "From the sales expert"), gives the writer each metric's meaning and direction (`facts.meanings`), and picks and colours the dashboard's headline numbers. Charts: area, stacked area, heatmap, treemap, waterfall (period against period, what moved the total), sparklines on dashboard numbers, and a "Show as" choice with the expert's pick first. Gains in green and losses in red (Settings > Display; blue-orange for colour blindness; "good for the business" makes a rise in costs red). Also: distinct counts no longer get shares of a total; an unreachable live database returns a clear 503 instead of a bare 500; one broken page no longer blanks the console (error boundary). Checked live: a real question got the waterfall and expert notes; heatmap and treemap on real product data.
 4j. **Done and deployed** (up to `2a76a54`; the user confirmed the deploy): a navy and blue theme instead of black and white (`--color-brand`, `--color-nav*` in `web/src/index.css`; primary buttons `bg-brand`); Ask and Dashboard always in sight (top of the sidebar, and in the header bar on phones); the Ask page shows the dashboard's headline numbers ("At a glance") and a "Metrics you can ask about" helper (click a metric to add it; also behind a "Metrics" link once an answer is shown), and the Metrics page left the sidebar (linked from the helper); "Ask me when a word has two meanings" (was "Ask me which definition I mean") shows only for the sample shop, the one source with such words; the LinkedIn card (and the "not possible" list behind it) removed.
 5. **Custom databases (hands-on):** the user redoes step 1 by hand (exercise 1: `domains/<name>/domain.yml` and `app/domain.py`); Claude's worked version is on the local branch `step1-domain-pack-reference` (not pushed). Then a second sample company, then a non-DuckDB warehouse.
-6. **Re-measure v2 in full** on the current code (most of a day's quota).
+6. **Re-measured v2 in full** on 2026-10-15 (`..._20261015-0905.jsonl`): pass@1 89%, all-runs 67%, 5,738 tokens, 36.8 s, no agent errors, none rate-limited. Four misses, four causes: m01 the writer fell into one repeated character until cut off; m04 three plans grouped by "__month" and were all refused (gave up); m08 and a02 lost content after two rewrites (first drafts were not recorded). The stricter review flagged none of the 36 final answers. Fixed after the run, with tests: repeated-character drafts are sent back; bare time names are repaired to `metric_time__<grain>`; eval records keep `review_log` (each review's objections). These fixes are not measured yet: the next full run will show them, and m08/a02 can then be diagnosed from their drafts' review log. Tokens rose about 1,000 per question with the expert's notes.
 7. **Put the dev log back**, then Phases 5 to 7 as before.
 
 Known gaps: the reviewer now also checks that a number sits next to the group and period of its own row (`misattributed` in `review.py`: per clause or table cell, with its column header; it would have caught the m06 miss), but a clause naming two groups at once, or a number attributed only by the sentence before, is not checked; the virtual env runs Python 3.11, not the 3.12 named above.

@@ -63,6 +63,7 @@ async def open_orchestrated() -> AsyncIterator[Ask]:
                 "tool_calls": state.get("tool_calls", []),
                 "plan_attempts": state.get("plan_attempts"),
                 "write_attempts": state.get("write_attempts"),
+                "review_log": state.get("review_log", []),
                 "plan": state.get("plan"),  # kept so a failed run can be diagnosed and reproduced as a test
                 **usage_totals(state.get("usage", [])),
             }

@@ -281,3 +281,31 @@ def test_comparisons_and_versus_sentences_are_not_misread(answer):
             {"store__store_name": "Brooklyn", "metric": "revenue", "before": 0, "after": 19610.0, "change": 19610.0,
              "change_pct": 100.0}]}]}
     assert misattributed(answer, facts, "Which store?") == []
+
+
+def test_an_answer_that_degenerates_into_repeated_characters_is_sent_back():
+    """Reproduces eval run m01 of 2026-10-15: the writer repeated one dash thousands of times until it ran
+    out of tokens, the answer was cut off before the store breakdown, and every number in it was real, so
+    the review passed. A table's separator line is not a repetition."""
+    from app.agents.orchestrated.review import review_answer
+
+    facts = {"steps": [{"id": "s", "period": "all dates in the data", "rows": [{"revenue": 26983.0}]}]}
+    broken = "Revenue grew by **26,983.0** (" + "\u2011" * 3000
+    issues = review_answer(broken, facts, "How much did revenue grow?", [], {})
+    assert any("repeated" in issue for issue in issues)
+    table = "| Store | Revenue |\n|" + "-" * 40 + "|" + "-" * 40 + "|\n| All | 26,983 |"
+    assert review_answer(table, facts, "How much did revenue grow?", [], {}) == []
+
+
+def test_a_bare_time_name_is_repaired_instead_of_failing_the_plan():
+    """Reproduces eval m04 of 2026-10-15: three plans grouped by '__month', all refused, so the agent gave up."""
+    from app.agents.orchestrated.plan import repair_names
+
+    plan = Plan.model_validate({"question_type": "comparison", "steps": [
+        {"id": "brooklyn_monthly", "purpose": "", "metrics": ["order_count"], "group_by": ["__month"],
+         "filters": [{"dimension": "store__store_name", "value": "Brooklyn"}]},
+        {"id": "weekly", "purpose": "", "metrics": ["order_count"], "group_by": ["week", "store__store_name"]}]})
+    repaired = repair_names(plan)
+    assert repaired.steps[0].group_by == ["metric_time__month"]
+    assert repaired.steps[1].group_by == ["metric_time__week", "store__store_name"]
+    assert repaired.steps[0].filters[0].dimension == "store__store_name"  # real names untouched

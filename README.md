@@ -5,6 +5,8 @@ computed by code from governed metric definitions and checked before you see it.
 
 **Live:** [analyst.medamine.work](https://analyst.medamine.work) (invite-only; sign-in required)
 
+![An answer with its waterfall chart and the steps the agent took](docs/screenshots/1-answer-waterfall.png)
+
 ## Why it exists
 
 A chatbot connected to a database can produce a confident answer with a wrong number in it. Analyst
@@ -46,6 +48,10 @@ agent's were systematic, so each one became a fix with a test.
 - **Accounts and security:** invite-only accounts, two-step sign-in, session management, encrypted
   credentials, per-user limits and a shared daily token budget; users can bring their own Claude, GPT,
   Gemini or Groq key.
+
+| The dashboard of a data source | An answer's query, rewritten for SQL Server |
+|---|---|
+| ![Dashboard: headline numbers against the previous 30 days, a weekly trend and breakdowns](docs/screenshots/2-dashboard.png) | ![Query tab: the answer's SQL translated to T-SQL](docs/screenshots/3-query-translation.png) |
 
 ## How an answer is built
 

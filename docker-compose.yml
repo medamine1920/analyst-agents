@@ -20,6 +20,9 @@ services:
       # the image). Without a key the console still starts; live questions explain what is missing.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      # Limits on the shared model budget (see app/api/security.py); a user's own model key skips them.
+      DAILY_TOKEN_BUDGET: ${DAILY_TOKEN_BUDGET:-150000}
+      USER_DAILY_TOKENS: ${USER_DAILY_TOKENS:-25000}
       # The console starts its own MCP server as a child process, over stdio.
       MCP_TRANSPORT: stdio
       # Live runs and paused questions are kept in the volume, so history survives a redeploy.

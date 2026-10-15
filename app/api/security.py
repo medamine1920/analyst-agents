@@ -82,11 +82,13 @@ class LimitReached(Exception):
 class Limits:
     daily_tokens: int = 150_000      # leaves room under Groq's 200K a day for evals and testing
     questions_per_hour: int = 30     # per user
+    user_daily_tokens: int = 25_000  # per user, so one tester cannot spend everyone's share (about 5 questions)
 
     @classmethod
     def from_env(cls) -> Limits:
         return cls(daily_tokens=int(os.environ.get("DAILY_TOKEN_BUDGET", cls.daily_tokens)),
-                   questions_per_hour=int(os.environ.get("QUESTIONS_PER_HOUR", cls.questions_per_hour)))
+                   questions_per_hour=int(os.environ.get("QUESTIONS_PER_HOUR", cls.questions_per_hour)),
+                   user_daily_tokens=int(os.environ.get("USER_DAILY_TOKENS", cls.user_daily_tokens)))
 
 
 def password_problem(name: str, password: str) -> str | None:
@@ -243,9 +245,11 @@ class SecurityStore:
             return [{**dict(row), "must_change": bool(row["must_change"])} for row in rows]
 
     def remove_user(self, name: str) -> bool:
+        """The account and what this store keeps about it: sessions, app keys, questions, activity."""
         with self._db() as db:
-            db.execute("delete from sessions where user_name = ?", (name,))
-            db.execute("delete from api_keys where user_name = ?", (name,))
+            for table, column in (("sessions", "user_name"), ("api_keys", "user_name"), ("questions", "user_name"),
+                                  ("auth_events", "user_name"), ("failed_logins", "user_name")):
+                db.execute(f"delete from {table} where {column} = ?", (name,))
             return db.execute("delete from users where name = ?", (name,)).rowcount > 0
 
     def users(self) -> list[str]:
@@ -437,6 +441,11 @@ class SecurityStore:
 
     # ---- budget, limits and the audit log ------------------------------------------------
 
+    def user_tokens_today(self, user: str) -> int:
+        with self._db() as db:
+            return db.execute("select coalesce(sum(tokens), 0) from questions where day = ? and own_key = 0 "
+                              "and user_name = ?", (today(), user)).fetchone()[0]
+
     def tokens_today(self) -> int:
         with self._db() as db:
             return db.execute("select coalesce(sum(tokens), 0) from questions where day = ? and own_key = 0",
@@ -457,6 +466,11 @@ class SecurityStore:
         now = time.time()
         if not own_key:
             self.check_budget(limits)
+            mine = self.user_tokens_today(user)
+            if mine >= limits.user_daily_tokens:
+                raise LimitReached(f"You have used your {limits.user_daily_tokens:,} model tokens for today. They come "
+                                   "back at midnight UTC; with your own model key (Settings > API keys) there is no "
+                                   "daily limit.")
         with self._db() as db:
             asked = db.execute("select count(*) from questions where user_name = ? and asked_at > ?",
                                (user, now - 3600)).fetchone()[0]
@@ -523,7 +537,8 @@ class SecurityStore:
         used = self.tokens_today()
         return {"tokens_today": used, "daily_tokens": limits.daily_tokens,
                 "tokens_left": max(limits.daily_tokens - used, 0),
-                "questions_last_hour": asked, "questions_per_hour": limits.questions_per_hour}
+                "questions_last_hour": asked, "questions_per_hour": limits.questions_per_hour,
+                "my_tokens_today": self.user_tokens_today(user), "my_daily_tokens": limits.user_daily_tokens}
 
     def history(self, user: str | None = None, limit: int = 50, project: str | None = None) -> list[dict]:
         """Newest first; with `project`, only that project's questions ("none" for questions in no project)."""

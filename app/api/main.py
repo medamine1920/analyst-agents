@@ -45,6 +45,7 @@ from app.agents.orchestrated.graph import (
 )
 from app.agents.orchestrated.plan import ALL_DEFINITIONS
 from app.api.answers import AnswerStore, data_version, suggest
+from app.api.beta import BetaStore, add_beta_routes
 from app.api.connector_routes import add_connector_routes
 from app.api.connectors import REQUEST_USER, build_mcp_app, result_from_events
 from app.api.dashboard import Dashboards
@@ -61,6 +62,7 @@ from app.api.security import (
 from app.api.sources_routes import add_source_routes
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
 from app.connectors.http import ConnectorError
+from app.connectors.kinds import google_revoke
 from app.connectors.store import ConnectionStore
 from app.semantic.translate import CannotTranslate, translate
 from app.sources.runtime import SourceRuntime
@@ -72,7 +74,7 @@ RESULTS_DIR = REPO_ROOT / "evals" / "results"
 WEB_DIST = REPO_ROOT / "web" / "dist"
 # Groq's free tier allows 8K tokens a minute, so a few runs at once already hit the limit: the rest wait.
 MAX_LIVE_RUNS = int(os.environ.get("MAX_LIVE_RUNS", "2"))
-OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me"}
+OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me", "/api/auth/signup"}
 CONTENT_SECURITY_POLICY = (
     # Google's file picker: its loader script from apis.google.com, and its window from docs.google.com.
     "default-src 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com; "
@@ -203,6 +205,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     projects = ProjectStore(store.path)
     connections = ConnectionStore(store.path)
     model_keys = ModelKeyStore(store.path)
+    beta = BetaStore(store.path)
     dashboards = Dashboards()
     model_factory = model_factory or providers.model_fns
     runtime = SourceRuntime(sources)
@@ -294,10 +297,17 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
             return JSONResponse({"detail": str(exc), "two_factor": True}, status_code=401)
         if token is None:
             raise HTTPException(401, "Wrong name or password.")
+        set_session_cookie(token, request, response)
+        return {"user": body.name}
+
+    def set_session_cookie(token: str, request: Request, response: Response) -> None:
         https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
         response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True,
                             samesite="lax", secure=https, path="/")
-        return {"user": body.name}
+
+    def start_session(name: str, password: str, request: Request, response: Response) -> None:
+        """Sign a new account straight in after it signs up."""
+        set_session_cookie(store.sign_in(name, password, None, *client_of(request)), request, response)
 
     @app.post("/api/auth/logout")
     async def sign_out(request: Request, response: Response) -> dict:
@@ -441,6 +451,8 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         if not account or account["role"] != "admin":
             raise HTTPException(403, "Only an admin can manage accounts.")
 
+    add_beta_routes(app, store, beta, admin_only, client_of, start_session)
+
     @app.get("/api/admin/users")
     async def list_accounts(request: Request) -> list[dict]:
         admin_only(request)
@@ -477,9 +489,34 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         admin_only(request)
         if name == request.state.user:
             raise HTTPException(422, "You cannot remove your own account.")
-        if not store.remove_user(name):
+        if not store.exists(name):
             raise HTTPException(404, f"No account called '{name}'.")
+        await forget_user(name)
+        store.remove_user(name)
         return {"removed": name}
+
+    async def forget_user(name: str) -> None:
+        """Everything linked to an account, as the privacy page promises: sources (files and metrics),
+        connections (Google access withdrawn at Google), model keys, projects, feedback and saved runs."""
+        for source in sources.list(name):
+            await runtime.close(source["id"])  # its query process, if one is running
+            sources.remove(name, source["id"])
+        for connection in connections.list(name):
+            if connection["kind"] == "google":
+                await google_revoke(connections.secret(name, connection["id"]) or {})
+            connections.remove(name, connection["id"])
+        for key in model_keys.list(name):
+            model_keys.remove(name, key["provider"])
+        for project in projects.list(name):
+            projects.remove(name, project["id"])
+        beta.forget(name)
+        for folder in trace_dirs:
+            for path in folder.glob("*.json"):
+                try:
+                    if json.loads(path.read_text(encoding="utf-8")).get("owner") == name:
+                        path.unlink()
+                except (OSError, ValueError):
+                    continue
 
     async def gateway_for(user: str, source: str) -> McpGateway:
         """The sample shop's gateway, or the query process of one of the user's ready sources."""

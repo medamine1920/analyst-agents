@@ -3,6 +3,7 @@ import { formatNumber } from "../lib/format";
 import Admin from "./Admin";
 import Evals from "./Evals";
 import Display from "./settings/Display";
+import Feedback from "./settings/Feedback";
 import ModelKeys from "./settings/ModelKeys";
 import Security from "./settings/Security";
 
@@ -41,6 +42,14 @@ function Usage({ session }) {
           <div className={`h-full rounded-full ${left < 0.1 ? "bg-fail" : "bg-series-1"}`} style={{ width: `${left * 100}%` }} />
         </div>
       </div>
+      {usage.my_daily_tokens != null && (
+        <p className="flex justify-between">
+          <span>Your share today</span>
+          <span className="font-semibold">
+            {formatNumber(usage.my_tokens_today)} of {formatNumber(usage.my_daily_tokens)} tokens
+          </span>
+        </p>
+      )}
       <p className="flex justify-between">
         <span>Your questions in the last hour</span>
         <span className="font-semibold">
@@ -49,7 +58,8 @@ function Usage({ session }) {
       </p>
       <p className="text-muted">
         The budget is shared by everyone on this console and starts again at midnight UTC. Saved answers to repeated
-        questions cost nothing, and questions run on your own model key (under API keys) do not count.
+        questions cost nothing, and questions run on your own model key (under API keys) count against neither the
+        budget nor your share.
       </p>
     </div>
   );
@@ -62,6 +72,7 @@ const TABS = [
   { id: "display", label: "Display", component: Display, hint: "How numbers look: colours for gains and losses." },
   { id: "usage", label: "Usage", component: Usage },
   { id: "people", label: "People", component: Admin, admin: true },
+  { id: "feedback", label: "Feedback", component: Feedback, admin: true, hint: "What testers said about the answers." },
   { id: "developer", label: "Developer", component: Evals, admin: true, hint: "How often the agent is right, measured on fixed question sets." },
 ];
 

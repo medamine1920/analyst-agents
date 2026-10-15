@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../lib/api";
 import { formatNumber, formatWhen } from "../lib/format";
+import Invites from "./settings/Invites";
 
 async function send(path, method) {
   const response = await fetch(path, { method });
@@ -58,6 +59,7 @@ export default function Admin({ session }) {
 
   return (
     <div className="space-y-5">
+      <Invites />
       <form onSubmit={invite} className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <label className="flex-1 space-y-1.5">
           <span className="block text-sm font-medium">Invite someone</span>

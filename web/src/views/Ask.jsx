@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import AnswerPanel from "../components/AnswerPanel";
 import GlanceStrip from "../components/GlanceStrip";
 import MetricsHelper from "../components/MetricsHelper";
+import WelcomeGuide from "../components/WelcomeGuide";
 import SourcePicker, { useSource } from "../components/SourcePicker";
 import Suggestions from "../components/Suggestions";
 import Trace from "../components/Trace";
@@ -236,6 +237,7 @@ export default function Ask({ params = {} }) {
       ) : (
         <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
           <div className="space-y-8">
+            <WelcomeGuide />
             <GlanceStrip source={source} />
             <Welcome source={source} earlier={earlier} onPick={(q) => (setQuestion(q), box.current?.focus())} />
           </div>

@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { formatNumber } from "../lib/format";
 import { Ident } from "./bits";
 import ExportMenu from "./ExportMenu";
+import FeedbackBar from "./FeedbackBar";
 import ResultTabs from "./ResultTabs";
 
 function finalAnswer(steps, done) {
@@ -151,6 +152,7 @@ export default function AnswerPanel({ question, steps, done, label, running, app
           </div>
         </div>
       )}
+      {done && answer && !running && <FeedbackBar traceId={traceId} question={question} />}
     </section>
   );
 }

@@ -1,11 +1,20 @@
-import { BarChart as Bars, LineChart as Lines } from "echarts/charts";
-import { AriaComponent, DataZoomComponent, GridComponent, LegendComponent, ToolboxComponent, TooltipComponent } from "echarts/components";
+import { BarChart as Bars, HeatmapChart as Heatmaps, LineChart as Lines, TreemapChart as Treemaps } from "echarts/charts";
+import {
+  AriaComponent,
+  DataZoomComponent,
+  GridComponent,
+  LegendComponent,
+  ToolboxComponent,
+  TooltipComponent,
+  VisualMapComponent,
+} from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { useEffect, useRef } from "react";
 
 // Only what the console draws, so the bundle stays small.
-echarts.use([Bars, Lines, GridComponent, TooltipComponent, LegendComponent, ToolboxComponent, DataZoomComponent, AriaComponent, CanvasRenderer]);
+echarts.use([Bars, Lines, Heatmaps, Treemaps, GridComponent, TooltipComponent, LegendComponent, ToolboxComponent,
+  DataZoomComponent, VisualMapComponent, AriaComponent, CanvasRenderer]);
 
 /** Whether this browser can draw on a canvas at all (test environments and some locked-down ones cannot). */
 function canDraw() {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import { getJSON, postJSON } from "./lib/api";
 import { linkTo, parseHash } from "./lib/route";
@@ -90,7 +91,9 @@ export default function App() {
           </header>
         )}
         <main className={`mx-auto px-5 py-6 pb-16 sm:px-8 ${route.view === "ask" ? "max-w-6xl pt-10" : ""}`}>
-          <View params={route.params} session={session} onSessionChanged={refresh} />
+          <ErrorBoundary resetKey={window.location.hash}>
+            <View params={route.params} session={session} onSessionChanged={refresh} />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

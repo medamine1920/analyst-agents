@@ -26,6 +26,10 @@
   --color-chart-axis: #c3c2b7;
   --color-chart-muted: #898781;
   --color-meter-track: #cde2fb;
+  /* Gains and losses (Settings > Display). Both pass 4.5:1 on white; the blue-orange pair stays apart for
+     red-green colour blindness. */
+  --color-gain: #15803d;
+  --color-loss: #b91c1c;
   --font-display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -33,6 +37,11 @@
 
 html {
   background: var(--color-paper);
+}
+
+html[data-signs="blue-orange"] {
+  --color-gain: #1d5fbf;
+  --color-loss: #b45309;
 }
 
 body {

@@ -13,8 +13,9 @@ const ZOOM_FROM = 24; // past this many periods the reader can zoom and pan alon
 /**
  * A metric over time: one line, or one per group (at most four). Series keep their colour by name,
  * sorted alphabetically, so a store is always the same colour. Hovering shows every series at that period.
+ * variant: "line", "area" (the total filled in) or "stacked" (groups stacked into their total).
  */
-export default function LineChart({ points, metricLabel, timeDimension, seriesDimension }) {
+export default function LineChart({ points, metricLabel, timeDimension, seriesDimension, variant = "line" }) {
   const xs = useMemo(() => [...new Set(points.map((p) => p.x))].sort(), [points]);
   const names = useMemo(() => [...new Set(points.map((p) => p.series ?? metricLabel))].sort(), [points, metricLabel]);
   const label = `${metricLabel} by ${dimensionLabel(timeDimension)}${seriesDimension ? ` and ${dimensionLabel(seriesDimension)}` : ""}`;
@@ -61,11 +62,12 @@ export default function LineChart({ points, metricLabel, timeDimension, seriesDi
           itemStyle: { borderColor: THEME.surface, borderWidth: 2 },
           emphasis: { focus: "series" },
           endLabel: several ? { show: true, color: THEME.ink2, formatter: (p) => p.seriesName } : undefined,
-          areaStyle: several ? undefined : { opacity: 0.08 },
+          stack: variant === "stacked" ? "total" : undefined,
+          areaStyle: variant === "stacked" ? { opacity: 0.55 } : variant === "area" ? { opacity: 0.22 } : several ? undefined : { opacity: 0.08 },
         };
       }),
     };
-  }, [points, xs, names, metricLabel, timeDimension]);
+  }, [points, xs, names, metricLabel, timeDimension, variant]);
 
   return (
     <figure className="space-y-1">

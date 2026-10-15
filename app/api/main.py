@@ -36,7 +36,7 @@ from starlette.routing import Route
 
 from app.agents import providers
 from app.agents.mcp_tools import default_target
-from app.agents.orchestrated.gateway import McpGateway
+from app.agents.orchestrated.gateway import McpGateway, SourceUnreachable
 from app.agents.orchestrated.graph import (
     DEFAULT_MODEL,
     open_checkpointer,
@@ -221,6 +221,12 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 await runtime.close_all()  # the query processes of users' sources
 
     app = FastAPI(title="Analyst Console API", lifespan=lifespan)
+
+    @app.exception_handler(SourceUnreachable)
+    async def unreachable(request: Request, exc: SourceUnreachable) -> JSONResponse:
+        """A live database that is down: a clear 503 the page can show, not a bare server error."""
+        return JSONResponse({"detail": f"{exc}. Check that it is running and reachable, then try again."},
+                            status_code=503)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):

@@ -104,7 +104,7 @@ function RunFacts({ done }) {
     <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
       <div>
         <dt className="inline">Time </dt>
-        <dd className="inline text-ink tabular-nums">{done.elapsed_s.toFixed(1)} s</dd>
+        <dd className="inline text-ink tabular-nums">{(done.elapsed_s ?? 0).toFixed(1)} s</dd>
       </div>
       <div>
         <dt className="inline">Model calls </dt>
@@ -119,7 +119,7 @@ function RunFacts({ done }) {
 }
 
 /** The question, then the answer with the numbers and a chart behind it, and what it cost. */
-export default function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain, labels = {}, traceId = null, source = "sample" }) {
+export default function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain, onAsk, labels = {}, traceId = null, source = "sample" }) {
   const answer = finalAnswer(steps, done);
   return (
     <section aria-label="Answer" className="space-y-4">
@@ -127,7 +127,7 @@ export default function AnswerPanel({ question, steps, done, label, running, app
       {label && <p className="text-sm text-muted">{label}</p>}
       {approval && !running && <ApprovalCard approval={approval} onChoose={onChoose} />}
       {answer ? (
-        <ResultTabs steps={steps} labels={labels} source={source}>
+        <ResultTabs steps={steps} labels={labels} source={source} onAsk={running ? null : onAsk}>
           <div className="prose-answer text-[1.02rem]">
             <Markdown remarkPlugins={[remarkGfm]}>{answer}</Markdown>
           </div>

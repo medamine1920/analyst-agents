@@ -19,7 +19,8 @@ NON_ADDITIVE = {"active_customers", "store_count"}
 
 def additive_metrics(catalog: dict[str, dict]) -> set[str]:
     """Simple sum/count metrics can be split into shares; ratios, derived and distinct counts cannot."""
-    return {name for name, info in catalog.items() if info["type"] == "simple" and name not in NON_ADDITIVE}
+    return {name for name, info in catalog.items()
+            if info["type"] == "simple" and name not in NON_ADDITIVE and not name.endswith("_distinct")}
 
 
 def evaluate(expression: str, values: dict[str, float | None]) -> float | None:

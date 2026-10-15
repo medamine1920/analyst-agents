@@ -222,3 +222,11 @@ def test_a_calculation_that_cannot_vary_is_refused_with_the_right_field_named():
     assert expression_problem("amount_total / amount_total", ["amount_total"])
     assert expression_problem("tax / revenue", ["tax", "revenue"]) is None
     assert expression_problem("amount_total * 100", ["amount_total"]) is None
+
+
+def test_distinct_counts_get_no_shares_of_a_total():
+    """A customer who buys in two stores is one customer, so distinct counts per group do not add up."""
+    from app.agents.orchestrated.analysis import additive_metrics
+
+    catalog = {"sales_customer_id_distinct": {"type": "simple"}, "sales_amount_total": {"type": "simple"}}
+    assert additive_metrics(catalog) == {"sales_amount_total"}

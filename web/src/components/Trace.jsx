@@ -25,7 +25,7 @@ function Step({ index, event, animate, last }) {
       >
         <span className="font-display text-[1.02rem] font-semibold">{info.title}</span>
         <KindTag kind={info.kind} />
-        <span className="ml-auto text-xs text-muted">{event.elapsed_s.toFixed(1)} s</span>
+        <span className="ml-auto text-xs text-muted">{(event.elapsed_s ?? 0).toFixed(1)} s</span>
       </button>
       {open && (
         <div className="mt-1 mb-4 text-[0.92rem] leading-relaxed">

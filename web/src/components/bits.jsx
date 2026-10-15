@@ -1,4 +1,5 @@
 import { formatCell } from "../lib/format";
+import { useTone } from "../lib/signs";
 
 /** A governed identifier (metric or dimension name): the only place monospace is used. */
 export function Ident({ children }) {
@@ -22,6 +23,7 @@ export function DataTable({ rows, limit = 12 }) {
   if (!rows || rows.length === 0) return <p className="text-sm text-muted">No rows returned.</p>;
   const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
   const shown = rows.slice(0, limit);
+  const tone = useTone();
   return (
     <div className="relative overflow-x-auto">
       <table className="w-full border-collapse text-sm">
@@ -43,7 +45,7 @@ export function DataTable({ rows, limit = 12 }) {
                 return (
                   <td
                     key={column}
-                    className={`border-b border-rule/60 px-2 py-1.5 ${numeric ? "text-right" : ""} ${value == null ? "text-muted italic" : ""}`}
+                    className={`border-b border-rule/60 px-2 py-1.5 ${numeric ? "text-right" : ""} ${value == null ? "text-muted italic" : ""} ${tone(column, value, row.metric)}`}
                   >
                     {formatCell(column, value)}
                   </td>

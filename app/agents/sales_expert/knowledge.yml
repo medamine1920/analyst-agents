@@ -1,0 +1,275 @@
+# What a senior sales analyst knows: the measures, what they mean, which way is good, how to show them.
+#
+# match:   patterns tried against a metric's name (and label), best first. The first measure that matches
+#          a metric gives it its meaning; order the measures from most to least specific.
+# aliases: words people use for it in questions (English and French), so the planner picks the right metric.
+# higher_is_better: true, false, or null when neither (tax, stores).
+# unit:    money, count, ratio (0.25 = 25%), percent, quantity, days.
+
+measures:
+  - id: average_order_value
+    label: Average order value
+    aliases: [average order value, aov, average basket, basket size, average ticket, average sale, panier moyen, ticket moyen]
+    match: ['average_order_value', 'aov$', 'avg_order']
+    definition: Revenue divided by the number of orders; how much a customer spends per order on average.
+    formula: revenue / orders
+    unit: money
+    higher_is_better: true
+    advice: A ratio, so it is never added up across stores or months; compare it, do not sum it.
+    follow_ups: ["How did {label} change month by month?", "Which {group} has the highest {label}?"]
+
+  - id: revenue_per_customer
+    label: Revenue per customer
+    aliases: [revenue per customer, arpu, average revenue per user, spend per customer, revenu par client]
+    match: ['revenue_per_customer', 'arpu']
+    definition: Revenue divided by the number of different customers who bought.
+    formula: revenue / customers
+    unit: money
+    higher_is_better: true
+    follow_ups: ["How did {label} change month by month?"]
+
+  - id: gross_margin
+    label: Gross margin
+    aliases: [gross margin, margin rate, margin percentage, marge brute, taux de marge]
+    match: ['gross_margin', 'margin_(pct|rate|percent)']
+    definition: Gross profit as a share of revenue; 0.30 means 30 cents of every unit of revenue is left after the cost of goods.
+    formula: (revenue - cost) / revenue
+    unit: ratio
+    higher_is_better: true
+    advice: Read it together with revenue; a high margin on little revenue is little profit.
+    follow_ups: ["Which {group} has the lowest {label}?", "How did {label} change month by month?"]
+
+  - id: gross_profit
+    label: Gross profit
+    aliases: [gross profit, profit, margin amount, marge, bénéfice brut]
+    match: ['gross_profit', '(^|_)profit(_total)?$']
+    definition: Revenue minus the cost of the goods sold.
+    formula: revenue - cost
+    unit: money
+    higher_is_better: true
+    follow_ups: ["Which {group} contributes most to {label}?"]
+
+  - id: discount_rate
+    label: Discount rate
+    aliases: [discount rate, discount share, markdown rate, taux de remise]
+    match: ['discount_rate', 'discount_(pct|share)']
+    definition: Discounts given as a share of revenue.
+    formula: discounts / revenue
+    unit: ratio
+    higher_is_better: false
+    advice: Rising discounts can buy revenue at the cost of margin; check gross margin alongside.
+    follow_ups: ["Which {group} gives the most discount?"]
+
+  - id: return_rate
+    label: Return rate
+    aliases: [return rate, returns rate, refund rate, taux de retour]
+    match: ['return_rate', 'refund_rate', 'returns?_(pct|share)']
+    definition: Returned orders or items as a share of those sold.
+    unit: ratio
+    higher_is_better: false
+    follow_ups: ["Which {group} has the highest {label}?"]
+
+  - id: returns
+    label: Returns
+    aliases: [returns, refunds, retours, remboursements]
+    match: ['(^|_)returns?(_|$)', 'refund']
+    definition: Value or number of goods sent back or refunded.
+    unit: money
+    higher_is_better: false
+
+  - id: churn_rate
+    label: Churn rate
+    aliases: [churn, churn rate, attrition, taux d'attrition, taux de désabonnement]
+    match: ['churn']
+    definition: Customers who stopped buying (or cancelled) in a period, as a share of those at its start.
+    unit: ratio
+    higher_is_better: false
+
+  - id: retention_rate
+    label: Retention rate
+    aliases: [retention, retention rate, repeat rate, taux de rétention, fidélisation]
+    match: ['retention', 'repeat_rate']
+    definition: Customers who keep buying, as a share of those at the start of the period.
+    unit: ratio
+    higher_is_better: true
+
+  - id: repeat_share
+    label: Share of orders from returning customers
+    aliases: [repeat orders, returning customers share, repeat purchase rate, part des clients fidèles]
+    match: ['returning_order_share', 'repeat_(order|purchase)']
+    definition: Orders that were not a customer's first order, as a share of all orders.
+    unit: ratio
+    higher_is_better: true
+
+  - id: conversion_rate
+    label: Conversion rate
+    aliases: [conversion, conversion rate, close rate, taux de conversion, taux de transformation]
+    match: ['conversion']
+    definition: Visits, leads or opportunities that became a sale, as a share of all of them.
+    unit: ratio
+    higher_is_better: true
+
+  - id: win_rate
+    label: Win rate
+    aliases: [win rate, deals won rate, taux de gain]
+    match: ['win_rate', 'won_(pct|share|rate)']
+    definition: Opportunities won as a share of opportunities closed (won and lost).
+    unit: ratio
+    higher_is_better: true
+
+  - id: quota_attainment
+    label: Quota attainment
+    aliases: [quota attainment, attainment, target achievement, atteinte des objectifs]
+    match: ['quota', 'attainment', 'target_(pct|achievement)']
+    definition: Sales achieved as a share of the target; 1.0 means exactly on target.
+    unit: ratio
+    higher_is_better: true
+
+  - id: sales_cycle
+    label: Sales cycle length
+    aliases: [sales cycle, cycle length, days to close, durée du cycle de vente]
+    match: ['cycle', 'days_to_close']
+    definition: Days from first contact (or opportunity creation) to the signed sale.
+    unit: days
+    higher_is_better: false
+
+  - id: customer_acquisition_cost
+    label: Customer acquisition cost
+    aliases: [cac, customer acquisition cost, cost per acquisition, coût d'acquisition]
+    match: ['(^|_)cac(_|$)', 'acquisition_cost', 'cost_per_(acquisition|customer)']
+    definition: Sales and marketing spend divided by the number of new customers won.
+    unit: money
+    higher_is_better: false
+
+  - id: lifetime_value
+    label: Customer lifetime value
+    aliases: [clv, ltv, lifetime value, customer lifetime value, valeur vie client]
+    match: ['(^|_)(clv|ltv)(_|$)', 'lifetime_value']
+    definition: Revenue (or margin) a customer brings over the whole relationship.
+    unit: money
+    higher_is_better: true
+
+  - id: recurring_revenue
+    label: Recurring revenue
+    aliases: [mrr, arr, recurring revenue, monthly recurring revenue, revenu récurrent]
+    match: ['(^|_)(mrr|arr)(_|$)', 'recurring']
+    definition: Revenue from subscriptions that repeats every month (MRR) or year (ARR).
+    unit: money
+    higher_is_better: true
+
+  - id: units_per_order
+    label: Units per order
+    aliases: [units per order, units per transaction, upt, items per basket, articles par panier]
+    match: ['units_per_order', 'items_per_order', '(^|_)upt$']
+    definition: Items sold divided by the number of orders.
+    formula: units / orders
+    unit: quantity
+    higher_is_better: true
+    follow_ups: ["Which {group} sells the most items per order?"]
+
+  - id: average_selling_price
+    label: Average selling price
+    aliases: [average selling price, asp, average price, average unit price, prix moyen de vente]
+    match: ['average_selling_price', '(^|_)asp$', 'price_average$', 'unit_price']
+    definition: Revenue divided by units sold; the price actually paid per item on average.
+    unit: money
+    higher_is_better: null
+
+  - id: orders_per_customer
+    label: Orders per customer
+    aliases: [orders per customer, purchase frequency, fréquence d'achat]
+    match: ['orders_per_customer', 'purchase_frequency']
+    definition: Orders divided by the number of different customers; how often a customer comes back.
+    unit: quantity
+    higher_is_better: true
+
+  - id: new_customers
+    label: New customers
+    aliases: [new customers, first-time buyers, acquisitions, nouveaux clients]
+    match: ['new_customers', 'first_time']
+    definition: Customers placing their first order in the period.
+    unit: count
+    higher_is_better: true
+    follow_ups: ["Which {group} brings the most {label}?"]
+
+  - id: customers
+    label: Active customers
+    aliases: [customers, active customers, buyers, clients, clients actifs, acheteurs]
+    match: ['active_customers', '(customer|client|buyer)\w*_distinct$', '(^|_)customers?(_count)?$']
+    definition: Different customers who bought at least once in the period.
+    unit: count
+    higher_is_better: true
+    advice: A distinct count, so it is not added up across months or stores (a customer can buy in several).
+    follow_ups: ["How did {label} change month by month?"]
+
+  - id: orders
+    label: Orders
+    aliases: [orders, transactions, sales count, number of sales, tickets, commandes, nombre de ventes]
+    match: ['^order_count$', 'orders?_count$', 'order\w*_distinct$', 'transaction\w*_(count|distinct)$', '^orders_count$']
+    definition: Number of orders (transactions) placed.
+    unit: count
+    higher_is_better: true
+    follow_ups: ["Which {group} had the most {label}?", "How did {label} change week by week?"]
+
+  - id: units
+    label: Units sold
+    aliases: [units, units sold, items sold, volume, quantity sold, unités vendues, quantité vendue]
+    match: ['items_sold', 'units_sold', '(quantity|qty|units)_total$']
+    definition: Number of items sold.
+    unit: quantity
+    higher_is_better: true
+    follow_ups: ["Which product sells the most units?"]
+
+  - id: cost
+    label: Cost of goods sold
+    aliases: [cost, costs, cogs, cost of goods, coût, coût des ventes]
+    match: ['(^|_)(cost|costs|cogs)(_total)?$', 'cost_total']
+    definition: What the goods sold cost the business.
+    unit: money
+    higher_is_better: false
+
+  - id: discounts
+    label: Discounts
+    aliases: [discounts, markdowns, remises, rabais]
+    match: ['discount\w*_total$']
+    definition: Value of the price reductions given.
+    unit: money
+    higher_is_better: false
+
+  - id: tax
+    label: Tax collected
+    aliases: [tax, sales tax, vat, tva, taxes]
+    match: ['^tax', 'tax_(collected|paid|total|amount)']  # not revenue_with_tax
+    definition: Sales tax collected on orders for the authorities; not revenue the business keeps.
+    unit: money
+    higher_is_better: null
+
+  - id: revenue
+    label: Revenue
+    aliases: [revenue, sales, turnover, income, takings, chiffre d'affaires, ventes]
+    match: ['^revenue', '_revenue$', 'revenue_total', '(amount|sales|turnover|net|subtotal|total|value|paid)_total$']
+    definition: Money from sales in the period (check whether tax is included).
+    unit: money
+    higher_is_better: true
+    advice: Explain a change by splitting it into orders and average order value.
+    follow_ups: ["Which {group} contributed most to the change in {label}?", "How did {label} change month by month?"]
+
+  - id: stores
+    label: Stores
+    aliases: [stores, shops, locations, magasins, points de vente]
+    match: ['store_count', 'shop_count', 'location_count']
+    definition: Number of stores, including those without sales.
+    unit: count
+    higher_is_better: null
+
+# Which chart answers which kind of question (see choose_chart in expert.py for the exact rules).
+charts:
+  tiles: A few numbers with no breakdown read best as large figures.
+  bar: Groups compared by size, largest first, one bar each.
+  treemap: Shares of a total across many groups, sized by contribution.
+  line: One measure over time.
+  area: A total over time, its size filled in.
+  lines: Up to four groups over time, one line each, labelled at the end.
+  stacked_area: How a total over time is made of up to four parts.
+  heatmap: Many groups over time; colour shows size, so patterns stand out where lines would tangle.
+  waterfall: What moved a number from one period to the next, group by group.

@@ -13,35 +13,38 @@ import re
 import time
 from typing import Any
 
+from app.agents.sales_expert.expert import measure_of
+
 GRAINS = ("day", "week", "month", "quarter", "year")
 WINDOW_DAYS = 30
 CACHE_SECONDS = 30
 MAX_TILES = 4
 MAX_GROUPS = 8
-# Headline measures in the order an analyst reads them. For each kind the patterns are tried best first
-# (order revenue before item revenue at list price); the first metric that matches is shown.
-TILE_PATTERNS = (
-    ("revenue", (r"^revenue_pre_tax$", r"^revenue$", r"^(?!item)\w*_revenue$",
-                 r"_(amount|revenue|sales|turnover|net|subtotal|total|value|paid)_total$")),
-    ("orders", (r"^order_count$", r"^orders_count$", r"_order\w*_distinct$")),
-    ("average order value", (r"average_order_value$",)),
-    ("customers", (r"^active_customers$", r"_(customer|client|buyer)\w*_distinct$")),
-    ("gross margin", (r"gross_margin$",)),
-    ("rows", (r"_count$",)),
-)
+SPARK_POINTS = 26
+# Headline measures in the order an analyst reads them, as the sales expert knows them.
+TILE_MEASURES = ("revenue", "orders", "average_order_value", "customers", "gross_margin")
 PERCENT = re.compile(r"(gross_margin|discount_rate|_share)$")  # ratios read as percentages
 PREFERRED_GROUPS = ("store", "region", "channel", "product", "category", "segment", "country", "city", "type")
 
 
 def tile_metrics(catalog: dict[str, dict]) -> list[str]:
-    chosen: list[str] = []
-    # A running total over a 30-day window says nothing a total does not.
+    """The expert's headline measures that this source has; within a measure, its best-matching metric
+    (order revenue before item revenue). Running totals are left out: over 30 days they add nothing."""
     candidates = [n for n, m in catalog.items() if m.get("type") != "cumulative" and "cumulative" not in n]
-    for _, patterns in TILE_PATTERNS:
-        found = next((name for pattern in patterns for name in candidates
-                      if re.search(pattern, name) and name not in chosen), None)
+    chosen: list[str] = []
+    for wanted in TILE_MEASURES:
+        found = []
+        for name in candidates:
+            measure = measure_of(name, catalog[name].get("label") or "")
+            if measure and measure["id"] == wanted:
+                patterns = measure["patterns"]
+                rank = next((i for i, p in enumerate(patterns) if p.search(name.lower())), len(patterns))
+                found.append((rank, name))
         if found:
-            chosen.append(found)
+            chosen.append(min(found)[1])
+    rows = next((n for n in candidates if n.endswith("_count") and n not in chosen), None)
+    if len(chosen) < MAX_TILES and rows:
+        chosen.append(rows)
     return chosen[:MAX_TILES] or candidates[:1]
 
 
@@ -96,6 +99,20 @@ def change(now: float | None, before: float | None) -> float | None:
     return round(100 * (now - before) / abs(before), 1)
 
 
+def _spark(trend: Any, time_column: str, metric: str, first: str, last: str, grain: str) -> list:
+    """The last SPARK_POINTS periods of one headline number, for the small line on its tile."""
+    if isinstance(trend, Exception):
+        return []
+    points = [{"x": r[time_column], "value": r[metric]} for r in _rows(trend) if r.get(metric) is not None]
+    additive = not re.search(r"average|_per_|rate|margin|share|distinct|customers", metric)
+    return [p["value"] for p in fill_periods(points, first, last, grain, additive)][-SPARK_POINTS:]
+
+
+def _direction(metric: str, catalog: dict[str, dict]) -> bool | None:
+    measure = measure_of(metric, catalog[metric].get("label") or "")
+    return measure["higher_is_better"] if measure else True
+
+
 def _rows(result: dict) -> list[dict]:
     return [dict(zip(result["columns"], row, strict=True)) for row in result["rows"]]
 
@@ -134,8 +151,9 @@ async def build(gateway: Any, live: bool) -> dict:
             arguments.update(start_time=period[0].isoformat(), end_time=period[1].isoformat())
         return gateway.call("query_metrics", arguments)
 
+    time_column = f"metric_time__{grain}"
     results = await asyncio.gather(
-        query(tiles, period=window), query(tiles, period=before), query([lead], [f"metric_time__{grain}"]),
+        query(tiles, period=window), query(tiles, period=before), query(tiles, [time_column]),
         *[query([lead], [d]) for d in dimensions], return_exceptions=True)
     now, then, trend, *breakdowns = results
     errors = [str(r)[:200] for r in results if isinstance(r, Exception)]
@@ -149,12 +167,12 @@ async def build(gateway: Any, live: bool) -> dict:
         "window": {"from": window[0].isoformat(), "to": window[1].isoformat(), "days": WINDOW_DAYS},
         "tiles": [{"metric": m, "label": catalog[m].get("label") or m, "description": catalog[m].get("description", ""),
                    "value": current.get(m), "previous": previous.get(m), "change_pct": change(current.get(m), previous.get(m)),
-                   "percent": bool(PERCENT.search(m))} for m in tiles],
+                   "percent": bool(PERCENT.search(m)), "higher_is_better": _direction(m, catalog),
+                   "spark": _spark(trend, time_column, m, first, last, grain)} for m in tiles],
         "trend": None, "breakdowns": [], "errors": errors,
     }
     additive = not re.search(r"average|_per_|rate|margin|share", lead)  # sums and counts, not ratios
     if not isinstance(trend, Exception):
-        time_column = f"metric_time__{grain}"
         points = [{"x": row[time_column], "value": row[lead]} for row in _rows(trend) if row[lead] is not None]
         board["trend"] = {"metric": lead, "label": catalog[lead].get("label") or lead, "dimension": time_column,
                           "points": fill_periods(points, first, last, grain, additive)}

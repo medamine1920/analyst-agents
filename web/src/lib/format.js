@@ -8,6 +8,7 @@ export const STEPS = {
   execute: { title: "Run the queries", kind: "code" },
   analyze: { title: "Compute the numbers", kind: "code" },
   analyze_partial: { title: "Compute the numbers from the queries that worked", kind: "code" },
+  advise: { title: "Sales expert: definitions, charts, next questions", kind: "code" },
   write: { title: "Write the answer", kind: "model" },
   review: { title: "Check the answer against the numbers", kind: "code" },
   give_up: { title: "Stop: no valid plan", kind: "code" },

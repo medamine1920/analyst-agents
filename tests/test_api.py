@@ -76,7 +76,7 @@ def test_ask_streams_every_step_then_saves_a_replayable_trace(client):
     response = client.post("/api/ask", json={"question": "How many orders were placed?"})
     events = events_of(response)
     nodes = [e["node"] for e in events if e["type"] == "step"]
-    assert nodes == ["resolve", "plan", "execute", "analyze", "write", "review"]
+    assert nodes == ["resolve", "plan", "execute", "analyze", "advise", "write", "review"]
     done = next(e for e in events if e["type"] == "done")
     assert done["answer"] == "There were 61,948 orders." and done["usage"]["input_tokens"] == 4000
     saved = next(e for e in events if e["type"] == "saved")
@@ -101,14 +101,14 @@ def test_an_ambiguous_question_asks_for_approval_and_resumes_after_a_restart(cli
 
     with client.restart() as restarted:
         rest = events_of(restarted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_with_tax"}))
-        assert [e["node"] for e in rest if e["type"] == "step"] == ["clarify", "execute", "analyze", "write", "review"]
+        assert [e["node"] for e in rest if e["type"] == "step"] == ["clarify", "execute", "analyze", "advise", "write", "review"]
         assert rest[0]["data"]["choices"] == {"income": "revenue_with_tax"}
         done = next(e for e in rest if e["type"] == "done")
         assert done["answer"] == WITH_TAX and done["usage"]["llm_calls"] == 2
         saved = next(e for e in rest if e["type"] == "saved")
         replay = restarted.get(f"/api/traces/{saved['id']}").json()
         assert replay["question"] == question
-        assert [e["type"] for e in replay["events"]].count("step") == 7  # both halves, in one trace
+        assert [e["type"] for e in replay["events"]].count("step") == 8  # both halves, in one trace
         # Answered once: the same pause cannot be answered again.
         again = restarted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_with_tax"})
         assert again.status_code == 404
@@ -173,3 +173,28 @@ def test_a_question_left_waiting_for_a_week_expires(client, tmp_path):
         assert restarted.get("/api/history").json()[0]["status"] == "expired"
         late = restarted.post("/api/resume", json={"thread_id": thread_id, "choice": "revenue_with_tax"})
         assert late.status_code == 404 and "expired" in late.json()["detail"]
+
+
+def test_a_database_that_cannot_be_reached_says_so(tmp_path, monkeypatch):
+    """Reproduces a live database that was down: the console answered with a bare 500, because the tool's
+    connection error was hidden as 'Error executing tool'. Now it is a 503 that names the problem."""
+    from app.mcp_server import server as mcp_module
+
+    class Down:
+        def list_metrics(self):
+            return [{"name": "orders_count", "label": "Orders", "type": "simple", "description": ""}]
+
+        def list_dimensions(self, metrics):
+            return []
+
+        def data_time_range(self):
+            raise RuntimeError('IO Error: Unable to connect to Postgres at "host=db port=5432": Connection refused')
+
+    monkeypatch.setattr(mcp_module, "layer", lambda: Down())
+    app = create_app(mcp_target=server, plan_fn=plan_fn, write_fn=write_fn, traces_dir=tmp_path / "traces",
+                     checkpoint_db=tmp_path / "c.sqlite", results_dir=tmp_path, auth=False,
+                     security_db=tmp_path / "console.sqlite")
+    with TestClient(app) as client:
+        response = client.get("/api/metrics")
+    assert response.status_code == 503
+    assert "could not be reached" in response.json()["detail"] and "Connection refused" in response.json()["detail"]

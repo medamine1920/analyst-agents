@@ -47,6 +47,8 @@ def summarize(node: str, update: dict) -> dict:
                 "errors": update.get("feedback", [])}
     if node in ("analyze", "analyze_partial"):
         return {"facts": update.get("facts", {}), "partial": node == "analyze_partial"}
+    if node == "advise":
+        return {"advice": update.get("advice", {})}
     if node == "write":
         return {"draft": update.get("draft", ""), "attempt": update.get("write_attempts")}
     if node == "review":

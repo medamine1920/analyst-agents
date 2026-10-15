@@ -205,6 +205,7 @@ export default function Ask({ params = {} }) {
             onChoose={choose}
             reused={reused}
             onAskAgain={() => run(shown.question, true)}
+            onAsk={(next) => (setQuestion(next), run(next))}
             labels={labels}
             traceId={traceId}
             source={source}

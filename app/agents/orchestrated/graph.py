@@ -40,6 +40,7 @@ from app.agents.orchestrated.plan import (
     validate_plan,
 )
 from app.agents.orchestrated.review import review_answer
+from app.agents.sales_expert import expert as sales_expert
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL = "openai/gpt-oss-120b"
@@ -135,6 +136,8 @@ class AnalystState(TypedDict, total=False):
     interactive: bool
     pending_ambiguities: list[dict]
     choices: dict[str, str]
+    # The sales expert's notes for the console: definitions, a chart per result, follow-up questions.
+    advice: dict
 
 
 def _catalog_text(catalog: dict) -> str:
@@ -198,9 +201,11 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
         context = await gateway.context()
         catalog, data_range = context["catalog"], context["data_range"]
         choices = state.get("choices", {})
+        # The sales expert adds what the question's sales words mean here (nothing if it uses none).
+        vocabulary = sales_expert.planner_notes(state["question"], catalog)
+        notes = _ambiguity_notes(state["resolution"], choices) + (f"\n{vocabulary}\n" if vocabulary else "")
         system = (prompts[0] if prompts else PLANNER_PROMPT).format(first=data_range["first_date"], last=data_range["last_date"],
-                                       notes=_ambiguity_notes(state["resolution"], choices),
-                                       catalog=_catalog_text(catalog))
+                                       notes=notes, catalog=_catalog_text(catalog))
         feedback, usage, attempts = list(state.get("feedback", [])), list(state["usage"]), state["plan_attempts"]
         while attempts < MAX_PLAN_ATTEMPTS:
             attempts += 1
@@ -259,6 +264,15 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
         facts = build_facts(plan_obj, state["results"], context["catalog"], context)
         return {"facts": _trim(facts)}
 
+    async def advise(state: AnalystState) -> dict:
+        """The sales expert (code, no model): definitions, charts and follow-ups for the console, and for the
+        writer what each metric means and which way is good, so a fall in costs is not called a decline."""
+        catalog = (await gateway.context())["catalog"]
+        plan = state["plan"]
+        advice = sales_expert.advise(state["question"], plan["question_type"], plan["steps"], state["facts"], catalog)
+        meanings = sales_expert.writer_notes([m for s in plan["steps"] for m in s["metrics"]], catalog)
+        return {"advice": advice, "facts": {**state["facts"], **({"meanings": meanings} if meanings else {})}}
+
     async def write(state: AnalystState) -> dict:
         notes = ""
         for term, chosen in state.get("choices", {}).items():
@@ -311,8 +325,8 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
 
     graph = StateGraph(AnalystState)
     for name, node in [("resolve", resolve), ("plan", plan), ("clarify", clarify), ("execute", execute),
-                       ("analyze", analyze),
-                       ("analyze_partial", analyze_partial), ("write", write), ("review", review),
+                       ("analyze", analyze), ("analyze_partial", analyze_partial), ("advise", advise),
+                       ("write", write), ("review", review),
                        ("give_up", give_up)]:
         graph.add_node(name, node)
     graph.add_edge(START, "resolve")
@@ -320,8 +334,9 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
     graph.add_conditional_edges("plan", after_plan, ["clarify", "execute", "give_up"])
     graph.add_edge("clarify", "execute")
     graph.add_conditional_edges("execute", after_execute, ["plan", "analyze", "analyze_partial"])
-    graph.add_edge("analyze", "write")
-    graph.add_edge("analyze_partial", "write")
+    graph.add_edge("analyze", "advise")
+    graph.add_edge("analyze_partial", "advise")
+    graph.add_edge("advise", "write")
     graph.add_edge("write", "review")
     graph.add_conditional_edges("review", after_review, ["write", END])
     graph.add_edge("give_up", END)

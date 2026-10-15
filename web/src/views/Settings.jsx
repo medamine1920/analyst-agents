@@ -2,6 +2,7 @@ import { linkTo } from "../lib/route";
 import { formatNumber } from "../lib/format";
 import Admin from "./Admin";
 import Evals from "./Evals";
+import Display from "./settings/Display";
 import ModelKeys from "./settings/ModelKeys";
 import Security from "./settings/Security";
 
@@ -58,6 +59,7 @@ const TABS = [
   { id: "profile", label: "Profile", component: Profile },
   { id: "security", label: "Security", component: Security },
   { id: "keys", label: "API keys", component: ModelKeys, hint: "Your own keys for Claude, GPT, Gemini or Groq. Your questions run on the model you choose." },
+  { id: "display", label: "Display", component: Display, hint: "How numbers look: colours for gains and losses." },
   { id: "usage", label: "Usage", component: Usage },
   { id: "people", label: "People", component: Admin, admin: true },
   { id: "developer", label: "Developer", component: Evals, admin: true, hint: "How often the agent is right, measured on fixed question sets." },

@@ -30,6 +30,7 @@ test("each query gets the chart that fits its breakdown", () => {
   );
   const kinds = Object.fromEntries(datasets(steps).map((d) => [d.id, d.chart]));
   expect(kinds).toEqual({ total: "tiles", monthly: "line", by_store: "bar", month_store: "lines", by_product: null });
+  expect(datasets(steps).find((d) => d.id === "month_store").options).toEqual(["lines", "stacked", "heatmap"]);
   const [, monthly, byStore] = datasets(steps);
   expect(chartPoints(monthly, "order_count").map((p) => p.x)).toEqual(["2025-01-01", "2025-02-01"]); // in time order
   expect(chartPoints(byStore, "order_count").map((p) => p.x)).toEqual(["Philadelphia", "Brooklyn"]); // largest first
@@ -51,4 +52,18 @@ test("csv cells are quoted when needed and never run as spreadsheet formulas", (
 test("axis ticks are round numbers that cover the data", () => {
   expect(niceTicks(425467)).toEqual([0, 200000, 400000, 600000]);
   expect(niceTicks(9.63)).toEqual([0, 2.5, 5, 7.5, 10]);
+});
+
+test("gains and losses: by sign, by meaning, and off", async () => {
+  const { tone } = await import("../lib/signs");
+  const polarity = { cost_total: false, revenue: true };
+  const meaning = { palette: "red-green", basis: "meaning" };
+  expect(tone(meaning, polarity, "change", 120, "revenue")).toBe("text-gain");
+  expect(tone(meaning, polarity, "change", -5, "revenue")).toBe("text-loss");
+  expect(tone(meaning, polarity, "change", 40, "cost_total")).toBe("text-loss"); // costs going up
+  expect(tone(meaning, polarity, "cost_total_change", 40)).toBe("text-loss"); // metric read from the column
+  expect(tone({ ...meaning, basis: "sign" }, polarity, "change", 40, "cost_total")).toBe("text-gain");
+  expect(tone(meaning, polarity, "revenue", 900)).toBe(""); // a plain positive value is not coloured
+  expect(tone(meaning, polarity, "revenue", -3)).toBe("text-loss"); // a negative one is
+  expect(tone({ ...meaning, palette: "off" }, polarity, "change", -5)).toBe("");
 });

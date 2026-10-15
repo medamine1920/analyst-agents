@@ -25,6 +25,10 @@ def _where(dimension: str, value: str) -> str:
     return f"{{{{ Dimension('{dimension}') }}}} = {literal}"
 
 
+class SourceUnreachable(ValueError):
+    """The data source's database could not be reached (down, wrong address, refused): not a query mistake."""
+
+
 class McpGateway:
     def __init__(self, client: Any) -> None:
         self._client = client
@@ -34,7 +38,10 @@ class McpGateway:
     async def call(self, name: str, arguments: dict) -> Any:
         result = await self._client.call_tool(name, arguments)
         if result.is_error:
-            raise ValueError("\n".join(getattr(block, "text", "") for block in result.content))
+            text = "\n".join(getattr(block, "text", "") for block in result.content)
+            if "The database could not be reached" in text:
+                raise SourceUnreachable(text[text.index("The database could not be reached"):])
+            raise ValueError(text)
         data = result.structured_content
         return data["result"] if isinstance(data, dict) and set(data) == {"result"} else data
 

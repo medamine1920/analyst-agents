@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 
 import BarChart from "../components/charts/BarChart";
 import LineChart from "../components/charts/LineChart";
+import Sparkline from "../components/charts/Sparkline";
 import SourcePicker, { useSource } from "../components/SourcePicker";
 import { getJSON } from "../lib/api";
 import { formatCell, formatNumber } from "../lib/format";
 import { dimensionLabel } from "../lib/results";
+import { tone, useSigns } from "../lib/signs";
 
 const REFRESH_SECONDS = 60; // live databases only; the server keeps results for 30 seconds
 
@@ -16,17 +18,23 @@ function shown(tile, value) {
 
 /** One headline number: the last 30 days, with the change against the 30 days before. */
 function Tile({ tile, window }) {
+  const signs = useSigns();
   const up = tile.change_pct > 0;
+  // Green when the change is good news: a rise in revenue, a fall in costs (Settings > Display).
+  const colour = tone(signs, { [tile.metric]: tile.higher_is_better }, "change", tile.change_pct, tile.metric) || "text-muted";
   const change =
     tile.change_pct === null || tile.change_pct === undefined ? null : (
-      <span className={`text-sm font-medium ${up ? "text-code" : tile.change_pct < 0 ? "text-fail" : "text-muted"}`}>
+      <span className={`text-sm font-medium ${colour}`}>
         <span aria-hidden>{up ? "▲" : tile.change_pct < 0 ? "▼" : "■"}</span> {Math.abs(tile.change_pct)}%
       </span>
     );
   return (
     <div className="space-y-1 rounded-xl border border-rule bg-surface p-4" title={tile.description}>
       <p className="text-sm text-muted">{tile.label}</p>
-      <p className="text-2xl font-semibold tracking-tight">{shown(tile, tile.value)}</p>
+      <div className="flex items-end justify-between gap-2">
+        <p className="text-2xl font-semibold tracking-tight">{shown(tile, tile.value)}</p>
+        <Sparkline values={tile.spark ?? []} label={`${tile.label}, recent trend`} />
+      </div>
       <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted">
         {change}
         <span>

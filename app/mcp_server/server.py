@@ -10,6 +10,7 @@ Run over HTTP (for deployment):
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
@@ -38,6 +39,11 @@ def layer() -> SemanticLayer:
     return SemanticLayer()
 
 
+UNREACHABLE = re.compile(r"unable to connect|connection refused|could not connect|could not translate host|"
+                         r"timeout expired|can't connect|no route to host|connection timed out|server closed", re.IGNORECASE)
+UNREACHABLE_PREFIX = "The database could not be reached"
+
+
 def anticipated(call: Callable[[], Any]) -> Any:
     """Run a tool body, turning expected failures into ToolError.
 
@@ -49,12 +55,18 @@ def anticipated(call: Callable[[], Any]) -> Any:
         return call()
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
+    except Exception as exc:
+        # A live database that is down or refuses the connection: say so, instead of a crash with no reason.
+        if UNREACHABLE.search(str(exc)):
+            reason = next((line for line in str(exc).splitlines() if UNREACHABLE.search(line)), str(exc))
+            raise ToolError(f"{UNREACHABLE_PREFIX}: {reason.strip()[:300]}") from exc
+        raise
 
 
 @server.tool()
 def list_metrics() -> list[dict[str, str]]:
     """List every governed metric with its name, label, type and description."""
-    return layer().list_metrics()
+    return anticipated(lambda: layer().list_metrics())
 
 
 @server.tool()
@@ -80,7 +92,7 @@ def list_dimensions(metrics: list[str]) -> list[str]:
 @server.tool()
 def get_data_time_range() -> dict[str, str]:
     """Return the first and last dates present in the data (ISO dates)."""
-    return layer().data_time_range()
+    return anticipated(lambda: layer().data_time_range())
 
 
 @server.tool()

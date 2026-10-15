@@ -289,3 +289,15 @@ line suggested continuity. Empty periods are now filled, with 0 for totals and c
 value for averages and ratios (an average of nothing is not zero). The same distinction decides whether
 a breakdown shows shares, because a share of an average means nothing.
 *Shows: testing with awkward data instead of tidy data, and knowing when zero is a fact and when it is a lie.*
+
+## Interview story 50: an expert agent that costs nothing per question
+
+The request was "another agent who thinks like an expert salesperson". The obvious build is a second
+model call per question; on a free tier of 200K tokens a day that halves the questions the console can
+answer, and its advice would vary from run to run. What an expert actually adds here is knowledge, not
+reasoning: that "basket size" and "panier moyen" mean average order value, that average order value is a
+ratio and must not be summed, that a rise in costs is bad news, that a comparison is best shown as a
+waterfall. That fits in a reviewed knowledge file applied by code, as an agent step of its own: it costs
+no tokens, gives the same advice every time, can be tested, and its direction ("lower is better") feeds
+the colours, the dashboard and the writer, so an answer no longer calls a fall in costs a decline.
+*Shows: choosing the cheapest mechanism that delivers the capability, and making domain knowledge a reviewable artefact.*

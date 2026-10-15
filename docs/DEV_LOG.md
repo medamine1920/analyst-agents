@@ -177,6 +177,25 @@ owner); a CSV column called "day" failed to build because MetricFlow reserves ti
 file whose headers were years (1958, 1959) had its header taken for data. Each was reproduced as a
 test first.
 
+## 2026-10-15 (later): own model keys, real databases, dashboards and a sales expert
+
+Settings > API keys now holds each user's own model keys (Claude, GPT, Gemini, Groq), checked with the
+provider and stored encrypted; questions on them skip the shared budget. Real external databases were
+connected the way a user would: the public Rfam MySQL and a local PostgreSQL with a read-only account.
+They found five faults the tests had missed (a password that could not sit in a MySQL connection string,
+a "top five" ranked by the writer from alphabetical rows, a schema.table name cut at the dot, a table the
+account may see but not read failing the whole source, and a CSV with mixed line endings); each was
+reproduced as a test and fixed. Generated metrics now read columns like a sales analyst (average order
+value, gross margin, discount rate, revenue per customer...), checked against raw SQL. Each answer's
+queries can be shown in ten languages, verified by running them on SQLite and PostgreSQL. Every source
+has a dashboard computed without the model, live databases refreshing themselves. A sales-expert agent
+(code over a reviewed knowledge file, no tokens) explains sales words to the planner, picks the chart for
+each result, and tells the writer and the colours which way is good. Charts gained areas, heatmaps,
+treemaps, waterfalls and sparklines; gains and losses are coloured (Settings > Display). The reviewer now
+also checks that each number sits next to the group and period of its own row; run over 25 saved answers
+it raised two false alarms (fixed) and caught one real mistake. The interface moved to a navy and blue
+theme with Ask and Dashboard always in sight.
+
 ## Interview story 40: a pause that costs nothing to resume
 
 LangGraph's `interrupt()` has a catch that is easy to miss: when a paused run resumes, the step that
@@ -204,7 +223,7 @@ and hands the writer the top month together with its own rows. The eval files al
 now, because this failure had to be reconstructed from the answer text.
 *Shows: distrust of a perfect score, honest reporting of a result that got worse, and fixing the cause rather than the symptom.*
 
-## Interview story 43: one design for three kinds of data
+## Interview story 42: one design for three kinds of data
 
 "Let users add a database" could have meant three integrations: CSV parsing, a Postgres client, a
 MySQL client, each with its own query path, and each bypassing the governed metrics the agent's
@@ -216,7 +235,7 @@ Two prototypes settled it before any product code: a CSV queried through the exi
 layer class, and an attached database whose new row appeared in the next answer with no rebuild.
 *Shows: reducing several integrations to one abstraction, and proving the risky part before building around it.*
 
-## Interview story 44: the privacy hole that only appeared with a feature
+## Interview story 43: the privacy hole that only appeared with a feature
 
 Saved runs had always been readable by any signed-in user who knew a run's id. With one shared demo
 dataset that was harmless, so nobody had questioned it. The day users could upload their own data, the
@@ -227,7 +246,7 @@ person, to someone who was shown it as a saved answer, and (for runs saved befor
 to admins only. The rule was tested from the other user's side, not just the owner's.
 *Shows: re-checking old assumptions when a new feature changes what data means, and testing access control from the outsider's side.*
 
-## Interview story 45: the test that found what the unit tests could not
+## Interview story 44: the test that found what the unit tests could not
 
 Before calling the database feature done, I connected a real public database (Rfam's MySQL) through
 the console exactly as a user would. It failed three ways that 117 passing tests had missed. The
@@ -240,7 +259,7 @@ computes and the model only writes, so breakdowns now carry a rank and arrive la
 was reproduced as a failing test first; the same live question then came back right.
 *Shows: testing against the real thing before calling it done, and tracing a wrong answer back to a broken design rule rather than a prompt.*
 
-## Interview story 46: bring your own model without forking the agent
+## Interview story 45: bring your own model without forking the agent
 
 Users asked to run their questions on their own Claude, GPT or Gemini key. The agent already took its
 planner and writer as two functions, so a key only has to produce those two functions: everything after
@@ -252,7 +271,7 @@ never shown again; questions on it skip the shared free-tier budget but keep the
 protects the server rather than the quota.
 *Shows: designing seams early so a large feature becomes a small one, and separating whose cost a limit protects.*
 
-## Interview story 47: least privilege is the normal case, not the edge case
+## Interview story 46: least privilege is the normal case, not the edge case
 
 The PostgreSQL test used the kind of account a careful company hands out: read-only, and allowed to
 read one table but not its neighbour. The build failed outright with "permission denied", because
@@ -265,7 +284,7 @@ happened to ignore; plans with a calculation that cannot vary are now refused an
 and rank fields code already computes.
 *Shows: designing for the restricted accounts real companies use, and closing a hole that had not yet caused a wrong answer.*
 
-## Interview story 48: proving a translation instead of trusting it
+## Interview story 47: proving a translation instead of trusting it
 
 Analysts wanted each answer's query in their own language: SQL Server, Oracle, MySQL, BigQuery, even
 MongoDB. A transpiler library does most of this, so the risk was trusting it. Reading its output engine
@@ -280,7 +299,7 @@ returns DuckDB's rows exactly, and a live answer's PostgreSQL version, run on th
 the same numbers.
 *Shows: verifying generated code by executing it, and refusing to approximate where a wrong answer would look right.*
 
-## Interview story 49: a chart that hid a year
+## Interview story 48: a chart that hid a year
 
 The live dashboard was tested by inserting three orders dated today into a database whose other orders
 ended a year earlier. The new orders appeared, but the monthly line went straight from June 2025 to
@@ -290,7 +309,7 @@ value for averages and ratios (an average of nothing is not zero). The same dist
 a breakdown shows shares, because a share of an average means nothing.
 *Shows: testing with awkward data instead of tidy data, and knowing when zero is a fact and when it is a lie.*
 
-## Interview story 50: an expert agent that costs nothing per question
+## Interview story 49: an expert agent that costs nothing per question
 
 The request was "another agent who thinks like an expert salesperson". The obvious build is a second
 model call per question; on a free tier of 200K tokens a day that halves the questions the console can

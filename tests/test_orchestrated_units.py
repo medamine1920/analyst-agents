@@ -309,3 +309,26 @@ def test_a_bare_time_name_is_repaired_instead_of_failing_the_plan():
     assert repaired.steps[0].group_by == ["metric_time__month"]
     assert repaired.steps[1].group_by == ["metric_time__week", "store__store_name"]
     assert repaired.steps[0].filters[0].dimension == "store__store_name"  # real names untouched
+
+
+def test_a_comparison_by_group_also_carries_the_total_change():
+    """Reproduces eval m01 of 2026-10-15 (11:07): the plan compared February and March by store only, so the
+    facts held each store's change but not the total growth (26,983), and the writer may not add them up."""
+    from app.agents.orchestrated.analysis import build_facts
+
+    plan = Plan.model_validate({"question_type": "change_explanation", "steps": [
+        {"id": "feb", "purpose": "", "metrics": ["revenue_pre_tax"], "group_by": ["store__store_name"],
+         "start_date": "2025-02-01", "end_date": "2025-02-28"},
+        {"id": "mar", "purpose": "", "metrics": ["revenue_pre_tax"], "group_by": ["store__store_name"],
+         "start_date": "2025-03-01", "end_date": "2025-03-31"}],
+        "comparisons": [{"before_step": "feb", "after_step": "mar"}]})
+    results = {
+        "feb": {"columns": ["store__store_name", "revenue_pre_tax"], "rows": [["Philadelphia", 37023.0]]},
+        "mar": {"columns": ["store__store_name", "revenue_pre_tax"], "rows": [["Brooklyn", 19610.0], ["Philadelphia", 44396.0]]},
+    }
+    catalog = {"revenue_pre_tax": {"type": "simple", "description": "", "label": "Revenue (pre-tax)"}}
+    facts = build_facts(plan, results, catalog, {"data_range": {}})
+    totals = facts["comparisons"][0]["totals"]
+    assert totals == [{"metric": "revenue_pre_tax", "before": 37023.0, "after": 64006.0, "change": 26983.0,
+                       "change_pct": 72.88}]
+    assert "totals" in str(facts["computed_fields"])

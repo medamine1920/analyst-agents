@@ -156,7 +156,8 @@ def misattributed(draft: str, facts: dict, question: str) -> list[dict]:
     """
     rows, group_forms, time_forms = _fact_rows(facts)
     unattached = supported_numbers({k: v for k, v in facts.items() if k not in ("steps", "comparisons")}) + \
-        supported_numbers([{k: v for k, v in s.items() if k != "rows"} for s in facts.get("steps", [])])
+        supported_numbers([{k: v for k, v in s.items() if k != "rows"} for s in facts.get("steps", [])]) + \
+        supported_numbers([c.get("totals", []) for c in facts.get("comparisons", [])])
     asked = set(numbers_in(question))
     found = []
     for text, column in _segments(draft):

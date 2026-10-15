@@ -213,6 +213,28 @@ def compare(before: QueryStep, before_rows: list[dict], after_rows: list[dict], 
     return output
 
 
+def comparison_totals(before: QueryStep, before_rows: list[dict], after_rows: list[dict],
+                      additive: set[str]) -> list[dict]:
+    """The change of the whole (every group together) for each additive metric of a comparison by group.
+
+    Without it a plan that compares two months by store only leaves the total growth out of the facts, and
+    the writer may not add the stores' changes up (eval m01, 2026-10-15).
+    """
+    if not before.group_by:
+        return []  # an ungrouped comparison's only row already is the total
+    totals = []
+    for metric in before.metrics:
+        if metric not in additive:
+            continue
+        old = sum(r.get(metric) or 0 for r in before_rows)
+        new = sum(r.get(metric) or 0 for r in after_rows)
+        row = {"metric": metric, "before": round(old, 4), "after": round(new, 4), "change": round(new - old, 4)}
+        if old:
+            row["change_pct"] = round(100 * (new - old) / old, 2)
+        totals.append(row)
+    return totals
+
+
 FIELD_GUIDE = {
     "<metric>_share_pct": "this row's share (%) of that metric's total across the breakdown, in the same period",
     "before / after": "the metric's value in the earlier / later step of a comparison",
@@ -224,6 +246,8 @@ FIELD_GUIDE = {
     "<metric>_rank": "this group's position for that metric in the same period (1 = largest); rows are listed "
                      "largest first, so 'the top five' are the rows ranked 1 to 5",
     "totals": "per-period totals of a breakdown's metrics (sum over all groups); cite these for totals",
+    "comparisons[].totals": "the change of the whole, all groups together (before, after, change, change_pct); "
+                            "cite it for how much the total grew or fell",
     "top_period": "the period with the highest total of a metric, with that period's rows: use these rows "
                   "(not a breakdown covering other dates) to say what the top period was made of",
     "period": "the dates a step covers; a step covering all dates says nothing about one month or week",
@@ -257,11 +281,15 @@ def build_facts(plan: Plan, results: dict[str, dict], catalog: dict[str, dict], 
                 calculation_errors.append({"calculation": calc.name, "error": str(exc)})
                 break
             row[calc.name] = None if value is None else round(value, 6)
-    comparisons = [
-        {"before": c.before_step, "after": c.after_step,
-         "rows": compare(by_id[c.before_step], rows_by_step[c.before_step], rows_by_step[c.after_step], additive)}
-        for c in plan.comparisons
-    ]
+    comparisons = []
+    for c in plan.comparisons:
+        before, rows_before, rows_after = by_id[c.before_step], rows_by_step[c.before_step], rows_by_step[c.after_step]
+        comparison = {"before": c.before_step, "after": c.after_step,
+                      "rows": compare(before, rows_before, rows_after, additive)}
+        totals = comparison_totals(before, rows_before, rows_after, additive)
+        if totals:
+            comparison["totals"] = totals
+        comparisons.append(comparison)
     return {
         "data_range": context["data_range"],
         "definitions": {m: catalog[m]["description"] for s in plan.steps for m in s.metrics},

@@ -251,3 +251,20 @@ def test_saved_connections_never_return_their_secret_and_runs_stay_private(api):
     assert api.get(f"/api/traces/{trace_id}").status_code == 404  # someone else's run
     assert api.get(f"/api/connectors/{saved['id']}/items").status_code == 404
     assert trace_id not in {t["id"] for t in api.get("/api/traces").json()}
+
+
+def test_an_unconfigured_google_card_says_what_is_missing_without_showing_values(monkeypatch):
+    """The card used to say only "not set up", so an operator who had edited the wrong file could not tell why."""
+    from app.connectors import kinds
+
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "s3cret-value")
+    monkeypatch.setenv("CONSOLE_URL", "https://analyst.example.com")
+    google = next(k for k in kinds.describe("http://internal:8000/") if k["kind"] == "google")
+    assert google["available"] is False and google["setup"]["problems"] == ["GOOGLE_CLIENT_ID is not set"]
+    assert google["setup"]["redirect_uri"] == "https://analyst.example.com/api/connectors/google/callback"
+    assert "s3cret-value" not in str(google)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", '"123-abc.apps.googleusercontent.com"')  # quoted by mistake
+    assert "does not look like" in kinds.google_setup_problems()[0]
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "123-abc.apps.googleusercontent.com")
+    assert kinds.google_configured() and "setup" not in next(k for k in kinds.describe() if k["kind"] == "google")

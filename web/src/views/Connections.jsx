@@ -62,7 +62,22 @@ function ConnectForm({ kind, onDone }) {
         <button type="button" onClick={google} disabled={!kind.available} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
           Sign in with Google
         </button>
-        {!kind.available && <p className="text-sm text-muted">Not set up on this console yet: the administrator must add a Google OAuth app (see docs/connectors.md).</p>}
+        {!kind.available && (
+          <div className="space-y-1.5 rounded-lg bg-partial-tint px-3 py-2 text-sm">
+            <p className="font-medium text-partial">Not set up on this console yet. On the server:</p>
+            <ul className="list-disc space-y-0.5 pl-5 text-ink">
+              {(kind.setup?.problems ?? ["Google sign-in is not configured"]).map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+            {kind.setup?.redirect_uri && (
+              <p className="text-muted">
+                Return address to register in Google Cloud: <code className="font-mono text-xs break-all text-ink">{kind.setup.redirect_uri}</code>
+              </p>
+            )}
+            <p className="text-muted">Add the values to the .env file next to docker-compose.yml, then restart the console (see docs/connectors.md).</p>
+          </div>
+        )}
         <Message message={message} />
       </div>
     );

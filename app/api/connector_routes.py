@@ -99,8 +99,8 @@ def add_connector_routes(app: FastAPI, connections: ConnectionStore, sources: So
         return {**source, "tables_found": [{"name": t["name"], "rows": len(t["rows"])} for t in tables]}
 
     @app.get("/api/connectors/catalog")
-    async def catalog() -> dict:
-        return {"kinds": kinds.describe()}
+    async def catalog(request: Request) -> dict:
+        return {"kinds": kinds.describe(str(request.base_url))}
 
     @app.get("/api/connectors")
     async def list_connections(request: Request) -> list[dict]:

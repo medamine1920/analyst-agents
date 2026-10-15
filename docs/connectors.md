@@ -39,7 +39,8 @@ under each answer: an Excel workbook of every table, or straight to a connected 
    CONSOLE_URL=https://analyst.medamine.work
    ```
 
-   then `docker compose up -d` in that folder. The Google card on the Connections page becomes active.
+   then `docker compose up -d --force-recreate console` in that folder. The Google card on the Connections
+   page becomes active; until then it lists what is still missing and the exact return address to register.
 
 The console asks for `drive.readonly` (to list and read files) and `drive.file` (to create the Sheets
 it exports, and only those). The refresh token is stored encrypted; removing the connection deletes

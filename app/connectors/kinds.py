@@ -308,7 +308,21 @@ SHEET_MIME = "application/vnd.google-apps.spreadsheet"
 
 
 def google_configured() -> bool:
-    return bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
+    return not google_setup_problems()
+
+
+def google_setup_problems() -> list[str]:
+    """What stops Google sign-in on this server, in words an operator can act on (never the values)."""
+    problems = []
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        problems.append("GOOGLE_CLIENT_ID is not set")
+    elif not client_id.endswith(".apps.googleusercontent.com") or client_id[0] in "'\"":
+        problems.append("GOOGLE_CLIENT_ID is set but does not look like a Google client ID "
+                        "(it ends with .apps.googleusercontent.com, without quotes or spaces)")
+    if not os.environ.get("GOOGLE_CLIENT_SECRET", "").strip():
+        problems.append("GOOGLE_CLIENT_SECRET is not set")
+    return problems
 
 
 def google_redirect(base_url: str) -> str:
@@ -401,12 +415,20 @@ class Google:
 
 
 KINDS = {k.kind: k for k in (Link, Mcp, Google, Slack, Teams, Airtable, Notion, HubSpot)}
-def describe() -> list[dict]:
-    """The catalog the console shows: what each kind is, what it needs, whether it imports and exports."""
+def describe(base_url: str = "") -> list[dict]:
+    """The catalog the console shows: what each kind is, what it needs, whether it imports and exports.
+
+    For Google, when it is not set up: what is missing and the exact return address to register.
+    """
+    def setup(kind) -> dict:
+        if kind.kind != "google" or google_configured():
+            return {}
+        return {"setup": {"problems": google_setup_problems(), "redirect_uri": google_redirect(base_url)}}
+
     return [{"kind": k.kind, "label": k.label, "description": k.description, "fields": k.fields, "imports": k.imports,
              "exports": k.exports, "oauth": getattr(k, "oauth", False),
              "available": google_configured() if k.kind == "google" else True,
-             "ask_for": getattr(k, "ask_for", {})} for k in KINDS.values()]
+             "ask_for": getattr(k, "ask_for", {}), **setup(k)} for k in KINDS.values()]
 
 
 __all__ = ["KINDS", "ConnectorError", "describe", "to_csv"]

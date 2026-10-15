@@ -2,7 +2,15 @@
 
 /* Two meaning colors only: violet = the model thinks, green = code computes. Amber marks failures. */
 @theme {
-  --color-paper: #eef1f5;
+  --color-paper: #eef2f9;
+  /* Brand: a navy frame and blue actions instead of black on white. White on brand is 6.7:1, on nav 15:1. */
+  --color-brand: #1d4ed8;
+  --color-brand-dark: #1e3a8a;
+  --color-brand-tint: #e3ebfd;
+  --color-nav: #0f1d3a;
+  --color-nav-active: #22356b;
+  --color-nav-ink: #dbe4f7;
+  --color-nav-muted: #93a6d1;
   --color-surface: #ffffff;
   --color-ink: #1a2233;
   --color-muted: #5b6578;
@@ -37,6 +45,11 @@
 
 html {
   background: var(--color-paper);
+}
+
+body {
+  /* A soft blue wash at the top of every page, fading into the paper colour. */
+  background: linear-gradient(180deg, #dfe8fb 0, var(--color-paper) 360px) no-repeat, var(--color-paper);
 }
 
 html[data-signs="blue-orange"] {

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import AnswerPanel from "../components/AnswerPanel";
+import GlanceStrip from "../components/GlanceStrip";
+import MetricsHelper from "../components/MetricsHelper";
 import SourcePicker, { useSource } from "../components/SourcePicker";
 import Suggestions from "../components/Suggestions";
 import Trace from "../components/Trace";
@@ -46,7 +48,9 @@ function useProject(projectId) {
  */
 export default function Ask({ params = {} }) {
   const [question, setQuestion] = useState(params.q ?? "");
-  const [labels, setLabels] = useState({}); // metric name -> its everyday label, for charts and tiles
+  const [metrics, setMetrics] = useState([]); // what this source can measure: the helper and the chart labels
+  const labels = Object.fromEntries(metrics.map((m) => [m.name, m.label]));
+  const [helper, setHelper] = useState(false); // the metrics helper while an answer is on screen
   const source = useSource();
   const [project, earlier, reloadProject] = useProject(params.project);
   const [shown, setShown] = useState({ question: "", steps: [], done: null, label: "" });
@@ -62,7 +66,7 @@ export default function Ask({ params = {} }) {
   useEffect(() => {
     const scope = source === "sample" ? "" : `?source=${encodeURIComponent(source)}`;
     getJSON(`/api/metrics${scope}`)
-      .then((data) => setLabels(Object.fromEntries((data?.metrics ?? []).map((m) => [m.name, m.label]))))
+      .then((data) => setMetrics(data?.metrics ?? []))
       .catch(() => {}); // labels are a nicety: charts fall back to metric names
   }, [source]);
 
@@ -179,20 +183,32 @@ export default function Ask({ params = {} }) {
           />
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-rule px-3 py-2">
             <SourcePicker compact />
-            <label className="flex items-center gap-2 text-sm text-muted">
-              <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} />
-              Ask me which definition I mean
-            </label>
+            {source === "sample" && (
+              // Only the sample shop has words with two official meanings (income: before or after tax).
+              <label
+                className="flex items-center gap-2 text-sm text-muted"
+                title="Some words have two official definitions, such as income before or after tax. Ticked: the agent pauses and asks which one you mean. Not ticked: the answer gives both."
+              >
+                <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} />
+                Ask me when a word has two meanings
+              </label>
+            )}
+            {shown.question && metrics.length > 0 && (
+              <button type="button" onClick={() => setHelper(!helper)} aria-expanded={helper} className="text-sm text-brand hover:underline">
+                {helper ? "Hide metrics" : "Metrics"}
+              </button>
+            )}
             <button
               type="submit"
               disabled={running || question.trim().length < 3}
-              className="ml-auto rounded-lg bg-ink px-4 py-1.5 text-sm font-medium text-white transition-opacity disabled:opacity-40"
+              className="ml-auto rounded-lg bg-brand hover:bg-brand-dark px-4 py-1.5 text-sm font-medium text-white transition-opacity disabled:opacity-40"
             >
               {running ? "Answering…" : "Ask"}
             </button>
           </div>
         </div>
         {typing && !running && <Suggestions text={question} onPickQuestion={setQuestion} onPickMetric={addMetric} source={source} />}
+        {helper && shown.question && <MetricsHelper metrics={metrics} onPick={addMetric} />}
         {error && <p role="alert" className="rounded-md bg-fail-tint px-3 py-2 text-sm text-fail">{error}</p>}
       </form>
 
@@ -218,7 +234,13 @@ export default function Ask({ params = {} }) {
           </section>
         </div>
       ) : (
-        <Welcome source={source} earlier={earlier} onPick={(q) => (setQuestion(q), box.current?.focus())} />
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+          <div className="space-y-8">
+            <GlanceStrip source={source} />
+            <Welcome source={source} earlier={earlier} onPick={(q) => (setQuestion(q), box.current?.focus())} />
+          </div>
+          <MetricsHelper metrics={metrics} onPick={addMetric} />
+        </div>
       )}
     </div>
   );

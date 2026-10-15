@@ -401,12 +401,6 @@ class Google:
 
 
 KINDS = {k.kind: k for k in (Link, Mcp, Google, Slack, Teams, Airtable, Notion, HubSpot)}
-NOT_POSSIBLE = {
-    "linkedin": "LinkedIn does not offer a data API to apps like this one (only approved LinkedIn partners get one), "
-                "so it cannot be connected. Export the data from LinkedIn as a CSV file and upload it instead.",
-}
-
-
 def describe() -> list[dict]:
     """The catalog the console shows: what each kind is, what it needs, whether it imports and exports."""
     return [{"kind": k.kind, "label": k.label, "description": k.description, "fields": k.fields, "imports": k.imports,
@@ -415,4 +409,4 @@ def describe() -> list[dict]:
              "ask_for": getattr(k, "ask_for", {})} for k in KINDS.values()]
 
 
-__all__ = ["KINDS", "NOT_POSSIBLE", "ConnectorError", "describe", "to_csv"]
+__all__ = ["KINDS", "ConnectorError", "describe", "to_csv"]

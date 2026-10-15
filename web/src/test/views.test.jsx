@@ -369,7 +369,6 @@ test("connections: tokens are typed into hidden fields, then only a masked hint 
         fields: [{ key: "base_id", label: "Base id", secret: false, required: true }, { key: "token", label: "Personal access token", secret: true, required: true }] },
       { kind: "google", label: "Google Sheets & Drive", description: "", fields: [], imports: true, exports: true, oauth: true, available: false },
     ],
-    not_possible: { linkedin: "LinkedIn does not offer a data API to apps like this one." },
   };
   let connections = [];
   const posts = [];
@@ -383,8 +382,7 @@ test("connections: tokens are typed into hidden fields, then only a masked hint 
     return { ok: true, json: async () => connections };
   });
   render(<Connections />);
-  expect(await screen.findByText(/LinkedIn does not offer a data API/)).toBeTruthy();
-  const card = screen.getByText("Import the tables of an Airtable base.").closest("li");
+  const card = (await screen.findByText("Import the tables of an Airtable base.")).closest("li");
   fireEvent.click(within(card).getByRole("button", { name: "Connect" }));
   const token = within(card).getByLabelText(/Personal access token/);
   expect(token.getAttribute("type")).toBe("password");

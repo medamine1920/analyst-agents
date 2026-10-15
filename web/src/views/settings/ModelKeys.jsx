@@ -60,7 +60,7 @@ function KeyCard({ entry, onChanged, onError }) {
         </div>
         <div className="flex gap-2">
           {!entry.active && (
-            <button type="button" disabled={busy} onClick={() => use(model)} className="rounded-md bg-ink px-3 py-1 text-sm text-white disabled:opacity-40">
+            <button type="button" disabled={busy} onClick={() => use(model)} className="rounded-md bg-brand hover:bg-brand-dark px-3 py-1 text-sm text-white disabled:opacity-40">
               Use this key
             </button>
           )}
@@ -157,7 +157,7 @@ function AddKey({ providers, onAdded }) {
         </label>
       </div>
       {error && <p role="alert" className="rounded-md bg-fail-tint px-3 py-2 text-sm text-fail">{error}</p>}
-      <button type="submit" disabled={busy || key.trim().length < 10} className="rounded-lg bg-ink px-4 py-2 font-medium text-white disabled:opacity-50">
+      <button type="submit" disabled={busy || key.trim().length < 10} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 font-medium text-white disabled:opacity-50">
         {busy ? "Checking the key…" : "Check and save"}
       </button>
       <p className="text-xs text-muted">

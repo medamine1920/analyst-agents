@@ -63,7 +63,7 @@ export function PasswordForm({ forced = false, onChanged }) {
       <button
         type="submit"
         disabled={busy || !current || !next || short || next !== repeat}
-        className="w-full rounded-lg bg-ink px-4 py-2 font-medium text-white disabled:opacity-50"
+        className="w-full rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 font-medium text-white disabled:opacity-50"
       >
         {busy ? "Saving…" : "Change password"}
       </button>

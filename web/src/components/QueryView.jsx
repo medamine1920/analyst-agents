@@ -61,7 +61,7 @@ function Translation({ set, source }) {
             </select>
           </label>
           {!result && !busy && (
-            <button type="button" onClick={() => show(language)} className="rounded-md bg-ink px-3 py-1 text-white">
+            <button type="button" onClick={() => show(language)} className="rounded-md bg-brand hover:bg-brand-dark px-3 py-1 text-white">
               Show
             </button>
           )}

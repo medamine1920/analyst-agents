@@ -59,7 +59,7 @@ function ConnectForm({ kind, onDone }) {
     return (
       <div className="space-y-3">
         <p className="text-sm text-muted">You will sign in with Google and choose what this console may read. It can then list your Sheets and spreadsheet files, import them, and save results as new Sheets.</p>
-        <button type="button" onClick={google} disabled={!kind.available} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+        <button type="button" onClick={google} disabled={!kind.available} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
           Sign in with Google
         </button>
         {!kind.available && <p className="text-sm text-muted">Not set up on this console yet: the administrator must add a Google OAuth app (see docs/connectors.md).</p>}
@@ -92,7 +92,7 @@ function ConnectForm({ kind, onDone }) {
         </label>
       ))}
       <Message message={message} />
-      <button type="submit" disabled={busy} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+      <button type="submit" disabled={busy} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
         {busy ? "Checking…" : "Connect"}
       </button>
     </form>
@@ -166,7 +166,7 @@ function ImportPanel({ connection, onDone }) {
             <span className="block text-sm font-medium">Name of the new data source</span>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder={chosen?.label} maxLength={80} className="w-full rounded-lg border border-rule bg-surface px-3 py-2" />
           </label>
-          <button type="submit" disabled={busy || !item} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+          <button type="submit" disabled={busy || !item} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
             {busy ? "Importing…" : "Import as a data source"}
           </button>
         </>
@@ -202,7 +202,7 @@ function LinkImport() {
       <div className="flex flex-col gap-2 sm:flex-row">
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" aria-label="Address of the file" className="flex-1 rounded-lg border border-rule bg-surface px-3 py-2" />
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" aria-label="Name of the new data source" className="rounded-lg border border-rule bg-surface px-3 py-2 sm:w-48" />
-        <button type="submit" disabled={busy || !url.trim()} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+        <button type="submit" disabled={busy || !url.trim()} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
           {busy ? "Importing…" : "Import"}
         </button>
       </div>
@@ -291,12 +291,6 @@ export default function Connections({ params = {} }) {
                   Connect
                 </button>
               )}
-            </li>
-          ))}
-          {Object.entries(catalog?.not_possible ?? {}).map(([kind, why]) => (
-            <li key={kind} className="space-y-1 rounded-xl border border-dashed border-rule p-4">
-              <p className="font-medium capitalize">{kind}</p>
-              <p className="text-sm text-muted">{why}</p>
             </li>
           ))}
         </ul>

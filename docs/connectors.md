@@ -17,8 +17,6 @@ and a 50 MB limit.
 | Notion | A database shared with the integration | | An internal integration secret |
 | HubSpot | Contacts, companies, deals, tickets | | A private app access token |
 
-LinkedIn cannot be connected: it gives no data API to apps like this one. Export from LinkedIn as CSV
-and upload the file instead.
 
 Imported data becomes a **data source** (one table per sheet, table or file), private to the user who
 imported it, with generated metrics like any upload. Answers can be exported from the Export menu

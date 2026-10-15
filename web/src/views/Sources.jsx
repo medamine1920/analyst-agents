@@ -65,7 +65,7 @@ function SourceCard({ source, onChanged }) {
         </ul>
       )}
       <div className="flex flex-wrap gap-2 pt-1">
-        <button type="button" onClick={ask} disabled={source.status !== "ready"} className="rounded-md bg-ink px-3 py-1 text-sm text-white disabled:opacity-40">
+        <button type="button" onClick={ask} disabled={source.status !== "ready"} className="rounded-md bg-brand hover:bg-brand-dark px-3 py-1 text-sm text-white disabled:opacity-40">
           Ask about it
         </button>
         {source.kind !== "sample" && (
@@ -151,7 +151,7 @@ function FilesForm({ kind, onAdded }) {
         {files.length > 0 && <p className="mt-3 text-muted">{files.map((f) => f.name).join(", ")}</p>}
       </div>
       {error && <p role="alert" className="rounded-md bg-fail-tint px-3 py-2 text-sm text-fail">{error}</p>}
-      <button type="submit" disabled={busy || !files.length} className="rounded-lg bg-ink px-4 py-2 font-medium text-white disabled:opacity-50">
+      <button type="submit" disabled={busy || !files.length} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 font-medium text-white disabled:opacity-50">
         {busy ? "Uploading…" : "Add data source"}
       </button>
       <p className="text-xs text-muted">Up to 50 MB. Files stay on this server and only you can ask about them.</p>
@@ -205,7 +205,7 @@ function ConnectionForm({ onAdded }) {
         {row("Tables (optional)", "tables", { placeholder: "orders, customers — all tables if empty" })}
       </div>
       {error && <p role="alert" className="rounded-md bg-fail-tint px-3 py-2 text-sm text-fail">{error}</p>}
-      <button type="submit" disabled={busy || !form.host || !form.database || !form.user} className="rounded-lg bg-ink px-4 py-2 font-medium text-white disabled:opacity-50">
+      <button type="submit" disabled={busy || !form.host || !form.database || !form.user} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 font-medium text-white disabled:opacity-50">
         {busy ? "Connecting…" : "Connect"}
       </button>
       <p className="text-xs text-muted">

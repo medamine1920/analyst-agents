@@ -29,7 +29,7 @@ export default function History() {
       <div className="rounded-xl border border-dashed border-rule p-8 text-center">
         <p className="font-medium">No questions yet</p>
         <p className="mt-1 text-sm text-muted">Questions you ask live appear here, with what each one cost.</p>
-        <a href={linkTo("ask", { mode: "live" })} className="mt-4 inline-block rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white">
+        <a href={linkTo("ask", { mode: "live" })} className="mt-4 inline-block rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white">
           Ask a question
         </a>
       </div>

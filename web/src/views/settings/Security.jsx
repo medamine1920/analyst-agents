@@ -83,7 +83,7 @@ function TwoStep({ session, onChanged }) {
           </button>
         </form>
       ) : !setup && !codes ? (
-        <button type="button" onClick={start} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white">
+        <button type="button" onClick={start} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-2 text-sm font-medium text-white">
           Turn on two-step sign-in
         </button>
       ) : null}
@@ -97,7 +97,7 @@ function TwoStep({ session, onChanged }) {
               <span className="block">2. Enter the 6-digit code it shows:</span>
               <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={8} className="w-32 rounded-lg border border-rule bg-surface px-3 py-1.5 font-mono" />
             </label>
-            <button type="submit" disabled={code.trim().length < 6} className="rounded-lg bg-ink px-4 py-1.5 font-medium text-white disabled:opacity-40">
+            <button type="submit" disabled={code.trim().length < 6} className="rounded-lg bg-brand hover:bg-brand-dark px-4 py-1.5 font-medium text-white disabled:opacity-40">
               Confirm
             </button>
           </div>

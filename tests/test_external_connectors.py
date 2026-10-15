@@ -229,8 +229,7 @@ def test_a_link_import_becomes_a_data_source_and_results_export_to_excel(api):
     assert excel.status_code == 200 and excel.content[:2] == b"PK"
     catalog = api.get("/api/connectors/catalog").json()
     assert {"link", "mcp", "google", "slack", "teams", "airtable", "notion", "hubspot"} <= {k["kind"] for k in catalog["kinds"]}
-    assert "linkedin" in catalog["not_possible"]
-    assert api.post("/api/connectors", json={"kind": "linkedin", "values": {}}).status_code == 404
+    assert api.post("/api/connectors", json={"kind": "fax", "values": {}}).status_code == 404  # no such connector
 
 
 @pytest.mark.integration

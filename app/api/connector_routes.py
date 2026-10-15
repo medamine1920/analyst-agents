@@ -62,7 +62,7 @@ def add_connector_routes(app: FastAPI, connections: ConnectionStore, sources: So
     def kind_of(name: str):
         kind = kinds.KINDS.get(name)
         if not kind:
-            raise HTTPException(404, kinds.NOT_POSSIBLE.get(name, f"There is no '{name}' connector."))
+            raise HTTPException(404, f"There is no '{name}' connector.")
         return kind
 
     def owned(request: Request, connection_id: str) -> dict:
@@ -100,7 +100,7 @@ def add_connector_routes(app: FastAPI, connections: ConnectionStore, sources: So
 
     @app.get("/api/connectors/catalog")
     async def catalog() -> dict:
-        return {"kinds": kinds.describe(), "not_possible": kinds.NOT_POSSIBLE}
+        return {"kinds": kinds.describe()}
 
     @app.get("/api/connectors")
     async def list_connections(request: Request) -> list[dict]:

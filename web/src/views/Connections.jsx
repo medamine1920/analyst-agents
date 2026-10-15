@@ -1,12 +1,63 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getJSON, postJSON } from "../lib/api";
+import { formatWhen } from "../lib/format";
+import { pickGoogleFiles } from "../lib/googlePicker";
 import { linkTo } from "../lib/route";
 import AccessKeys from "./AccessKeys";
-import { formatWhen } from "../lib/format";
 
 function Badge({ children }) {
   return <span className="rounded-full bg-paper px-2 py-0.5 text-xs text-muted">{children}</span>;
+}
+
+/** Connected, in green: shown on the tool's card and on each saved connection. */
+function Connected() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-code-tint px-2 py-0.5 text-xs font-medium text-gain">
+      <span aria-hidden>✓</span> Connected
+    </span>
+  );
+}
+
+/** Google with the file picker: the user chooses files in Google's own window; only those become readable. */
+function PickerImport({ connection, onDone }) {
+  const [messages, setMessages] = useState([]);
+  const [busy, setBusy] = useState(false);
+  async function choose() {
+    setBusy(true);
+    setMessages([]);
+    try {
+      const files = await pickGoogleFiles(await getJSON(`/api/connectors/${connection.id}/picker`));
+      for (const file of files) {
+        try {
+          const source = await postJSON(`/api/connectors/${connection.id}/import`, { item: file.id, name: file.name });
+          const tables = source.tables_found.map((t) => `${t.name} (${t.rows} rows)`).join(", ");
+          setMessages((m) => [...m, { ok: true, text: `${file.name}: importing ${tables}, building its metrics now.`, source: true }]);
+        } catch (e) {
+          setMessages((m) => [...m, { ok: false, text: `${file.name}: ${e.message}` }]);
+        }
+      }
+      if (files.length) onDone();
+    } catch (e) {
+      setMessages([{ ok: false, text: e.message }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="space-y-3 border-t border-rule pt-3">
+      <p className="text-sm text-muted">
+        Choose Sheets, Excel or CSV files in Google&apos;s window. The console can read only the files you choose, and each
+        becomes a data source.
+      </p>
+      <button type="button" onClick={choose} disabled={busy} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-40">
+        {busy ? "Working…" : "Choose files from Google Drive"}
+      </button>
+      {messages.map((m) => (
+        <Message key={m.text} message={m} />
+      ))}
+    </div>
+  );
 }
 
 function Message({ message }) {
@@ -242,9 +293,12 @@ export default function Connections({ params = {} }) {
   }, [load]);
   const kinds = Object.fromEntries((catalog?.kinds ?? []).map((k) => [k.kind, k]));
 
-  async function remove(connection) {
-    if (!window.confirm(`Remove ${connection.name}? Its stored credential is deleted.`)) return;
-    await fetch(`/api/connectors/${connection.id}`, { method: "DELETE" });
+  async function disconnect(list) {
+    const names = list.map((c) => c.name).join(", ");
+    const google = list.some((c) => c.kind === "google") ? " and its access to your Google account is withdrawn" : "";
+    if (!window.confirm(`Disconnect ${names}? The stored credential is deleted${google}.`)) return;
+    const results = await Promise.all(list.map((c) => fetch(`/api/connectors/${c.id}`, { method: "DELETE" })));
+    setMessage(results.every((r) => r.ok) ? { ok: true, text: `${names} disconnected.` } : { ok: false, text: `${names} could not be disconnected. Try again.` });
     load();
   }
 
@@ -262,7 +316,9 @@ export default function Connections({ params = {} }) {
               <li key={c.id} className="space-y-3 rounded-xl border border-rule bg-surface p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <p className="font-medium">{c.name}</p>
+                    <p className="flex flex-wrap items-center gap-2 font-medium">
+                      {c.name} <Connected />
+                    </p>
                     <p className="text-xs text-muted">
                       {kinds[c.kind]?.label ?? c.kind} · added {formatWhen(c.created_at, { time: false })} · last used {formatWhen(c.last_used_at, { time: false })}
                       {c.hint ? ` · ${c.hint}` : ""}
@@ -274,13 +330,14 @@ export default function Connections({ params = {} }) {
                         Import…
                       </button>
                     )}
-                    <button type="button" onClick={() => remove(c)} className="rounded-md border border-rule px-3 py-1 text-sm hover:border-fail hover:text-fail">
-                      Remove
+                    <button type="button" onClick={() => disconnect([c])} className="rounded-md border border-rule px-3 py-1 text-sm hover:border-fail hover:text-fail">
+                      Disconnect
                     </button>
                   </div>
                 </div>
                 {kinds[c.kind]?.exports && <p className="text-xs text-muted">Answers can be sent here from the Export menu under each answer.</p>}
-                {importing === c.id && <ImportPanel connection={c} onDone={load} />}
+                {importing === c.id &&
+                  (c.kind === "google" && kinds.google?.picker ? <PickerImport connection={c} onDone={load} /> : <ImportPanel connection={c} onDone={load} />)}
               </li>
             ))}
           </ul>
@@ -292,7 +349,10 @@ export default function Connections({ params = {} }) {
           {(catalog?.kinds ?? []).filter((k) => k.kind !== "link").map((k) => (
             <li key={k.kind} className="space-y-3 rounded-xl border border-rule bg-surface p-4 transition-shadow hover:shadow-sm">
               <div className="space-y-1">
-                <p className="font-medium">{k.label}</p>
+                <p className="flex flex-wrap items-center justify-between gap-2 font-medium">
+                  {k.label}
+                  {connections.some((c) => c.kind === k.kind) && <Connected />}
+                </p>
                 <p className="text-sm text-muted">{k.description}</p>
                 <p className="flex gap-1.5 pt-1">
                   {k.imports && <Badge>brings data in</Badge>}
@@ -301,6 +361,21 @@ export default function Connections({ params = {} }) {
               </div>
               {adding === k.kind ? (
                 <ConnectForm kind={k} onDone={(text) => (setAdding(null), setMessage({ ok: true, text }), load())} />
+              ) : connections.some((c) => c.kind === k.kind) ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => disconnect(connections.filter((c) => c.kind === k.kind))}
+                    className="rounded-md border border-rule px-3 py-1.5 text-sm hover:border-fail hover:text-fail"
+                  >
+                    Disconnect
+                  </button>
+                  {!k.oauth && (
+                    <button type="button" onClick={() => setAdding(k.kind)} className="rounded-md border border-rule px-3 py-1.5 text-sm hover:border-ink">
+                      Connect another
+                    </button>
+                  )}
+                </div>
               ) : (
                 <button type="button" onClick={() => setAdding(k.kind)} className="rounded-md border border-rule px-3 py-1.5 text-sm hover:border-ink">
                   Connect

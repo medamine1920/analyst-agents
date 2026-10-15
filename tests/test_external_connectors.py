@@ -268,3 +268,40 @@ def test_an_unconfigured_google_card_says_what_is_missing_without_showing_values
     assert "does not look like" in kinds.google_setup_problems()[0]
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "123-abc.apps.googleusercontent.com")
     assert kinds.google_configured() and "setup" not in next(k for k in kinds.describe() if k["kind"] == "google")
+
+
+@pytest.mark.integration
+def test_google_with_the_file_picker_exports_with_a_link_and_disconnecting_withdraws_access(api, tmp_path, monkeypatch):
+    """Each user connects their own Google account; with the picker the console asks only for drive.file."""
+    for name, value in {"GOOGLE_CLIENT_ID": "1-a.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET": "x",
+                        "GOOGLE_API_KEY": "AIza-test", "GOOGLE_APP_ID": "123456"}.items():
+        monkeypatch.setenv(name, value)
+    assert kinds.google_scopes() == kinds.FILE_SCOPE  # not the whole Drive
+    store = ConnectionStore(tmp_path / "console.sqlite")
+    saved = store.add("ana", "google", "My Drive", {}, {"refresh_token": "r-ana", "access_token": "a-ana",
+                                                       "expires_at": time.time() + 3600})
+    calls = []
+
+    def google(request):
+        calls.append((request.method, str(request.url), request.content.decode()))
+        if request.url.path.endswith("/spreadsheets"):
+            return httpx.Response(200, json={"spreadsheetId": "s1", "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/s1"})
+        return httpx.Response(200, json={})
+
+    serve(google)
+    sign_in(api, "ana")
+    assert next(k for k in api.get("/api/connectors/catalog").json()["kinds"] if k["kind"] == "google")["picker"] is True
+    assert api.get(f"/api/connectors/{saved['id']}/picker").json() == {
+        "access_token": "a-ana", "api_key": "AIza-test", "app_id": "123456"}
+
+    events = api.post("/api/ask", json={"question": "How many orders were placed?"}).text
+    trace_id = json.loads(next(line for line in events.splitlines() if '"saved"' in line)[6:])["id"]
+    sent = api.post(f"/api/connectors/{saved['id']}/send", json={"trace_id": trace_id}).json()
+    assert sent["url"] == "https://docs.google.com/spreadsheets/d/s1" and "Saved" in sent["message"]
+
+    sign_in(api, "bob")  # someone else's Google account is not theirs to use
+    assert api.get(f"/api/connectors/{saved['id']}/picker").status_code == 404
+    sign_in(api, "ana")
+    assert api.delete(f"/api/connectors/{saved['id']}").status_code == 200
+    assert ("POST", kinds.GOOGLE_REVOKE, "token=r-ana") in calls  # access withdrawn at Google
+    assert api.get("/api/connectors").json() == []

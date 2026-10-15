@@ -9,5 +9,5 @@ export default defineConfig({
     // The console calls /api/...; in development Vite forwards those calls to FastAPI.
     proxy: { "/api": "http://127.0.0.1:8001" },
   },
-  test: { environment: "jsdom" },
+  test: { environment: "jsdom", setupFiles: ["src/test/setup.js"] },
 });

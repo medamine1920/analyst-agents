@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -128,9 +129,21 @@ def add_connector_routes(app: FastAPI, connections: ConnectionStore, sources: So
 
     @app.delete("/api/connectors/{connection_id}")
     async def disconnect(connection_id: str, request: Request) -> dict:
-        owned(request, connection_id)
+        """Forget the connection and its credential; for Google, also withdraw the access at Google."""
+        connection = owned(request, connection_id)
+        if connection["kind"] == "google":
+            await kinds.google_revoke(connections.secret(request.state.user, connection_id) or {})
         connections.remove(request.state.user, connection_id)
         return {"removed": connection_id}
+
+    @app.get("/api/connectors/{connection_id}/picker")
+    async def picker(connection_id: str, request: Request) -> dict:
+        """For the Google file picker in the browser: the user's own short-lived token, and this console's ids."""
+        connection = owned(request, connection_id)
+        if connection["kind"] != "google" or not kinds.google_picker():
+            raise HTTPException(404, "The Google file picker is not set up on this console.")
+        secret = connections.secret(request.state.user, connection_id)
+        return await guarded(runner(request, connection).picker(secret))
 
     # Declared before the routes with an id, or "link" would be taken for one.
     @app.post("/api/connectors/link/import")
@@ -170,7 +183,9 @@ def add_connector_routes(app: FastAPI, connections: ConnectionStore, sources: So
             raise HTTPException(422, "Choose the answer to send.")
         payload = {**payload_from_trace(load_trace(body.trace_id)), "tool": body.tool, "argument": body.argument}
         secret = connections.secret(request.state.user, connection_id)
-        return {"message": await guarded(runner(request, connection).send(connection["settings"], secret, payload))}
+        message = await guarded(runner(request, connection).send(connection["settings"], secret, payload))
+        link = re.search(r"https://\S+", message)
+        return {"message": message, "url": link[0] if link else None}
 
     @app.post("/api/export/xlsx")
     async def export_excel(body: TablesRequest) -> StreamingResponse:

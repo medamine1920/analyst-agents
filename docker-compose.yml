@@ -36,6 +36,9 @@ services:
       # Google Sheets & Drive connector (see docs/connectors.md); without these the card stays inactive.
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Optional, for Google's file picker (users choose files; the app can then be published for everyone).
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GOOGLE_APP_ID: ${GOOGLE_APP_ID:-}
       CONSOLE_URL: ${CONSOLE_URL:-https://analyst.medamine.work}
     volumes:
       - console-checkpoints:/srv/checkpoints

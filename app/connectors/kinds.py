@@ -303,7 +303,20 @@ class HubSpot:
 
 GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
-GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file"
+GOOGLE_REVOKE = "https://oauth2.googleapis.com/revoke"
+# With the file picker the console asks only for drive.file: it sees the files a user picks and the Sheets it
+# creates, nothing else. Google publishes apps asking for that without a security assessment. Without the
+# picker (no GOOGLE_API_KEY / GOOGLE_APP_ID) it falls back to reading the user's spreadsheet files.
+FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+
+def google_picker() -> bool:
+    return bool(os.environ.get("GOOGLE_API_KEY", "").strip() and os.environ.get("GOOGLE_APP_ID", "").strip())
+
+
+def google_scopes() -> str:
+    return FILE_SCOPE if google_picker() else f"{READ_SCOPE} {FILE_SCOPE}"
 SHEET_MIME = "application/vnd.google-apps.spreadsheet"
 
 
@@ -333,7 +346,7 @@ def google_authorize_url(state: str, verifier: str, redirect: str) -> str:
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     return GOOGLE_AUTH + "?" + urlencode({
         "client_id": os.environ["GOOGLE_CLIENT_ID"], "redirect_uri": redirect, "response_type": "code",
-        "scope": GOOGLE_SCOPES, "access_type": "offline", "prompt": "consent", "state": state,
+        "scope": google_scopes(), "access_type": "offline", "prompt": "consent", "state": state,
         "code_challenge": challenge, "code_challenge_method": "S256", "include_granted_scopes": "true"})
 
 
@@ -344,7 +357,17 @@ async def google_exchange(code: str, verifier: str, redirect: str) -> dict:
     if "refresh_token" not in body:
         raise ConnectorError("Google did not grant offline access. Remove the console from your Google account's apps and connect again.")
     return {"refresh_token": body["refresh_token"], "access_token": body["access_token"],
-            "expires_at": time.time() + int(body.get("expires_in", 3600)) - 60}
+            "expires_at": time.time() + int(body.get("expires_in", 3600)) - 60, "scope": body.get("scope", "")}
+
+
+async def google_revoke(secret: dict) -> None:
+    """Tell Google the console no longer has access (on disconnect). A failure here never blocks removal."""
+    token = secret.get("refresh_token") or secret.get("access_token")
+    if token:
+        try:
+            await http.request("POST", GOOGLE_REVOKE, data={"token": token})
+        except ConnectorError:
+            pass  # already revoked by the user, or Google unreachable: the stored token is deleted anyway
 
 
 class Google:
@@ -367,6 +390,11 @@ class Google:
         if self.on_refresh:
             self.on_refresh(secret)
         return secret["access_token"]
+
+    async def picker(self, secret: dict) -> dict:
+        """What the browser's file picker needs: a short-lived access token (drive.file), the API key and app id."""
+        return {"access_token": await self._token(secret), "api_key": os.environ["GOOGLE_API_KEY"].strip(),
+                "app_id": os.environ["GOOGLE_APP_ID"].strip()}
 
     async def items(self, settings: dict, secret: dict) -> list[dict]:
         token = await self._token(secret)
@@ -415,6 +443,8 @@ class Google:
 
 
 KINDS = {k.kind: k for k in (Link, Mcp, Google, Slack, Teams, Airtable, Notion, HubSpot)}
+
+
 def describe(base_url: str = "") -> list[dict]:
     """The catalog the console shows: what each kind is, what it needs, whether it imports and exports.
 
@@ -428,7 +458,8 @@ def describe(base_url: str = "") -> list[dict]:
     return [{"kind": k.kind, "label": k.label, "description": k.description, "fields": k.fields, "imports": k.imports,
              "exports": k.exports, "oauth": getattr(k, "oauth", False),
              "available": google_configured() if k.kind == "google" else True,
-             "ask_for": getattr(k, "ask_for", {}), **setup(k)} for k in KINDS.values()]
+             "ask_for": getattr(k, "ask_for", {}), **setup(k),
+             **({"picker": google_picker()} if k.kind == "google" else {})} for k in KINDS.values()]
 
 
 __all__ = ["KINDS", "ConnectorError", "describe", "to_csv"]

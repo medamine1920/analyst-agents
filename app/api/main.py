@@ -74,8 +74,12 @@ WEB_DIST = REPO_ROOT / "web" / "dist"
 MAX_LIVE_RUNS = int(os.environ.get("MAX_LIVE_RUNS", "2"))
 OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/me"}
 CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
+    # Google's file picker: its loader script from apis.google.com, and its window from docs.google.com.
+    "default-src 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com https://ssl.gstatic.com; "
+    "connect-src 'self' https://apis.google.com https://*.googleapis.com; "
+    "frame-src https://docs.google.com https://drive.google.com https://accounts.google.com; "
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 )
 

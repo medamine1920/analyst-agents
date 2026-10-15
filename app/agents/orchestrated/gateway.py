@@ -64,7 +64,8 @@ class McpGateway:
         return sorted(set.intersection(*sets)) if sets else []
 
     async def run_step(self, step: QueryStep) -> dict:
-        arguments: dict[str, Any] = {"metrics": step.metrics, "limit": MAX_ROWS_PER_STEP}
+        # The SQL is kept for the person (to read or translate), never shown to the model.
+        arguments: dict[str, Any] = {"metrics": step.metrics, "limit": MAX_ROWS_PER_STEP, "include_sql": True}
         if step.group_by:
             arguments["group_by"] = step.group_by
             arguments["order_by"] = step.group_by

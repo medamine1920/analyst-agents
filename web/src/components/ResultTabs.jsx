@@ -6,11 +6,13 @@ import { DataTable } from "./bits";
 import BarChart from "./charts/BarChart";
 import LineChart from "./charts/LineChart";
 import StatTiles from "./charts/StatTiles";
+import QueryView from "./QueryView";
 
 const TABS = [
   ["answer", "Answer"],
   ["data", "Data"],
   ["chart", "Chart"],
+  ["query", "Query"],
 ];
 
 function DataView({ sets }) {
@@ -92,7 +94,7 @@ function ChartView({ sets, labels }) {
 }
 
 /** The answer, the numbers behind it and a chart of them, one tab each. */
-export default function ResultTabs({ steps, labels, children }) {
+export default function ResultTabs({ steps, labels, source = "sample", children }) {
   const [tab, setTab] = useState("answer");
   const sets = useMemo(() => datasets(steps), [steps]);
   const available = sets.length ? TABS : TABS.slice(0, 1);
@@ -128,6 +130,7 @@ export default function ResultTabs({ steps, labels, children }) {
         )}
         {tab === "data" && <DataView sets={sets} />}
         {tab === "chart" && <ChartView sets={sets} labels={labels} />}
+        {tab === "query" && <QueryView sets={sets} source={source} />}
       </div>
     </div>
   );

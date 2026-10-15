@@ -119,7 +119,7 @@ function RunFacts({ done }) {
 }
 
 /** The question, then the answer with the numbers and a chart behind it, and what it cost. */
-export default function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain, labels = {}, traceId = null }) {
+export default function AnswerPanel({ question, steps, done, label, running, approval, onChoose, reused, onAskAgain, labels = {}, traceId = null, source = "sample" }) {
   const answer = finalAnswer(steps, done);
   return (
     <section aria-label="Answer" className="space-y-4">
@@ -127,7 +127,7 @@ export default function AnswerPanel({ question, steps, done, label, running, app
       {label && <p className="text-sm text-muted">{label}</p>}
       {approval && !running && <ApprovalCard approval={approval} onChoose={onChoose} />}
       {answer ? (
-        <ResultTabs steps={steps} labels={labels}>
+        <ResultTabs steps={steps} labels={labels} source={source}>
           <div className="prose-answer text-[1.02rem]">
             <Markdown remarkPlugins={[remarkGfm]}>{answer}</Markdown>
           </div>

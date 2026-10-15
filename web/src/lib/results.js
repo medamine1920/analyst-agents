@@ -45,11 +45,19 @@ function chartKind(groupBy, rows) {
   return null;
 }
 
+/** The SQL each query ran with, by step id (kept with the run; never shown to the model). */
+function latestSql(steps) {
+  const runs = steps.filter((s) => s.node === "execute" && s.data?.queries);
+  const queries = runs.length ? runs[runs.length - 1].data.queries : {};
+  return Object.fromEntries(Object.entries(queries).map(([id, q]) => [id, q.sql ?? null]));
+}
+
 /** One dataset per query step that returned rows, in plan order. */
 export function datasets(steps) {
   const facts = latestFacts(steps);
   if (!facts?.steps) return [];
   const planSteps = Object.fromEntries((latestPlan(steps)?.steps ?? []).map((s) => [s.id, s]));
+  const sql = latestSql(steps);
   return facts.steps
     .filter((step) => step.rows?.length)
     .map((step) => {
@@ -68,6 +76,8 @@ export function datasets(steps) {
         groupBy,
         metrics: metrics.length ? metrics : numeric,
         chart: chartKind(groupBy, step.rows),
+        sql: sql[step.id] ?? null,
+        step: planned ?? null,
       };
     });
 }

@@ -89,6 +89,7 @@ export default function Ask({ params = {} }) {
       const trace = await getJSON(`/api/traces/${id}`);
       reset(trace.question, trace.label || "");
       setTraceId(trace.id);
+      if (trace.source) chooseSource(trace.source); // its queries (and their translations) are about this data
       setShown((s) => ({
         ...s,
         steps: trace.events.filter((e) => e.type === "step"),
@@ -206,6 +207,7 @@ export default function Ask({ params = {} }) {
             onAskAgain={() => run(shown.question, true)}
             labels={labels}
             traceId={traceId}
+            source={source}
           />
           <section aria-label="How this answer was built" className="self-start rounded-xl border border-rule bg-surface/70 p-5">
             <h3 className="mb-4 font-semibold">How this answer was built</h3>

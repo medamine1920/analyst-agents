@@ -41,7 +41,8 @@ def summarize(node: str, update: dict) -> dict:
                 "ambiguities": update.get("ambiguities", [])}
     if node == "execute":
         results = update.get("results", {})
-        return {"queries": {step: {"columns": r.get("columns", []), "rows": r.get("row_count", 0)}
+        return {"queries": {step: {"columns": r.get("columns", []), "rows": r.get("row_count", 0),
+                                   "sql": r.get("sql")}
                             for step, r in results.items()},
                 "errors": update.get("feedback", [])}
     if node in ("analyze", "analyze_partial"):
@@ -88,16 +89,17 @@ async def stream_trace(graph: Any, question: str, *, thread_id: str | None = Non
 
 
 def save_trace(question: str, events: list[dict], directory: Path = TRACES_DIR, label: str = "",
-               prefix: str = "", owner: str = "") -> str:
+               prefix: str = "", owner: str = "", source: str = "sample") -> str:
     """Store a finished run so the console can replay it without calling the model.
 
     `owner` is who asked: only they (and admins, for runs saved before owners were recorded) can open it.
+    `source` is the data the run was about, so a replay (and its query translations) use the same one.
     """
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:48]
     trace_id = f"{prefix}{stamp}-{slug}"
     payload = {"id": trace_id, "question": question, "label": label, "created": stamp, "owner": owner,
-               "events": events}
+               "source": source, "events": events}
     (directory / f"{trace_id}.json").write_text(json.dumps(payload, indent=1), encoding="utf-8")
     return trace_id

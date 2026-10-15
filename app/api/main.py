@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from mcp import Client
 from pydantic import BaseModel, Field
+from sqlglot.errors import SqlglotError
 from starlette.routing import Route
 
 from app.agents import providers
@@ -60,6 +61,7 @@ from app.api.sources_routes import add_source_routes
 from app.api.trace import TRACES_DIR, save_trace, stream_trace
 from app.connectors.http import ConnectorError
 from app.connectors.store import ConnectionStore
+from app.semantic.translate import CannotTranslate, translate
 from app.sources.runtime import SourceRuntime
 from app.sources.store import SAMPLE, SourceStore
 
@@ -124,6 +126,13 @@ class ConnectorAskRequest(BaseModel):
 class KeyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80, description="What the key is for, e.g. 'Sales sheet'")
     days: int | None = Field(default=90, ge=1, le=730, description="Days until the key stops working; null for never")
+
+
+class TranslateRequest(BaseModel):
+    language: str = Field(max_length=20, description="postgres, mysql, tsql, oracle, plsql, snowflake, bigquery, sqlite, duckdb or mongodb")
+    source: str = Field(default=SAMPLE, pattern=SOURCE_ID)
+    sql: str | None = Field(default=None, max_length=50_000, description="The query's SQL, as saved with the run")
+    step: dict | None = Field(default=None, description="The plan step (needed for MongoDB)")
 
 
 class ModelKeyRequest(BaseModel):
@@ -619,7 +628,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
                 if question_id:
                     store.finish_question(question_id, "waiting", spent(last))
             elif last["type"] == "done":
-                trace_id = save_trace(question, collected, live_dir, label=trace_label, owner=user)
+                trace_id = save_trace(question, collected, live_dir, label=trace_label, owner=user, source=source)
                 paused_file.unlink(missing_ok=True)
                 await state["checkpointer"].adelete_thread(thread_id)  # a finished run needs no checkpoint
                 if question_id:
@@ -723,6 +732,24 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         if result["error"]:
             raise HTTPException(502, f"The run stopped: {result['error']}")
         return {"question": body.question, **result}
+
+    @app.post("/api/translate")
+    async def translate_query(body: TranslateRequest, request: Request) -> dict:
+        """One query of an answer in another SQL dialect, an Oracle PL/SQL block or a MongoDB pipeline.
+
+        Text only: nothing is run. A user's source is translated against its own tables.
+        """
+        folder = None
+        if body.source != SAMPLE:
+            try:
+                sources.get(request.state.user, body.source)
+            except LookupError as exc:
+                raise not_found(exc) from exc
+            folder = sources.folder / body.source
+        try:
+            return translate(body.language, body.sql, body.step, folder)
+        except (CannotTranslate, SqlglotError, KeyError) as exc:
+            raise HTTPException(422, f"This query cannot be written exactly in that language: {exc}") from exc
 
     @app.get("/api/health")
     async def health() -> dict:

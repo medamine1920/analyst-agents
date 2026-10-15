@@ -21,6 +21,7 @@ export function formatWhen(seconds, { time = true, empty = "never" } = {}) {
 }
 
 export function formatNumber(value) {
+  if (value === null || value === undefined) return "no value"; // e.g. an average for a period with no rows
   return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 

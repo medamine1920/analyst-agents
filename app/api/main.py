@@ -47,6 +47,7 @@ from app.agents.orchestrated.plan import ALL_DEFINITIONS
 from app.api.answers import AnswerStore, data_version, suggest
 from app.api.connector_routes import add_connector_routes
 from app.api.connectors import REQUEST_USER, build_mcp_app, result_from_events
+from app.api.dashboard import Dashboards
 from app.api.model_keys import ModelKeyStore
 from app.api.projects import ProjectStore
 from app.api.security import (
@@ -198,6 +199,7 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
     projects = ProjectStore(store.path)
     connections = ConnectionStore(store.path)
     model_keys = ModelKeyStore(store.path)
+    dashboards = Dashboards()
     model_factory = model_factory or providers.model_fns
     runtime = SourceRuntime(sources)
     live_runs = asyncio.Semaphore(MAX_LIVE_RUNS)
@@ -732,6 +734,20 @@ def create_app(mcp_target: Any = None, plan_fn=None, write_fn=None, results_dir:
         if result["error"]:
             raise HTTPException(502, f"The run stopped: {result['error']}")
         return {"question": body.question, **result}
+
+    @app.get("/api/dashboard")
+    async def dashboard(request: Request, source: str = SAMPLE) -> dict:
+        """Headline numbers, a trend and breakdowns for a source, computed in code (no model, no tokens).
+
+        A live database is marked live: its date range is read again on each refresh.
+        """
+        user = request.state.user
+        try:
+            gateway = await gateway_for(user, source)
+        except LookupError as exc:
+            raise not_found(exc) from exc
+        live = source != SAMPLE and sources.get(user, source)["kind"] in ("postgres", "mysql")
+        return await dashboards.get((user, source), gateway, live)
 
     @app.post("/api/translate")
     async def translate_query(body: TranslateRequest, request: Request) -> dict:

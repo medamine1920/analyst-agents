@@ -141,6 +141,7 @@ export default function Sidebar({ route, session, onSignOut }) {
           </Section>
         )}
         <Section title="Data">
+          <Item href="#dashboard" active={at("dashboard")}>Dashboard</Item>
           <Item href="#sources" active={at("sources")}>Data sources</Item>
           <Item href="#connections" active={at("connections")}>Connections</Item>
           <Item href="#metrics" active={at("metrics")}>Metrics</Item>

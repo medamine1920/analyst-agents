@@ -6,6 +6,7 @@ import { linkTo, parseHash } from "./lib/route";
 import { PasswordForm } from "./views/Account";
 import Ask from "./views/Ask";
 import Connections from "./views/Connections";
+import Dashboard from "./views/Dashboard";
 import History from "./views/History";
 import Metrics from "./views/Metrics";
 import Settings from "./views/Settings";
@@ -14,6 +15,7 @@ import Sources from "./views/Sources";
 
 const VIEWS = {
   ask: { title: "Ask", component: Ask },
+  dashboard: { title: "Dashboard", hint: "Headline numbers, trends and breakdowns, computed without the model; live databases update themselves", component: Dashboard },
   history: { title: "All questions", hint: "Everything you asked, with what each answer cost", component: History },
   metrics: { title: "Metrics", hint: "What the agent can measure, and how each metric is defined", component: Metrics },
   sources: { title: "Data sources", hint: "Upload files or connect a database, then ask about it", component: Sources },

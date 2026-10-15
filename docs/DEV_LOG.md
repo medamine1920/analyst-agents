@@ -264,3 +264,28 @@ writing `amount_total - amount_total` for "highest minus lowest", a column of ze
 happened to ignore; plans with a calculation that cannot vary are now refused and pointed to the gap
 and rank fields code already computes.
 *Shows: designing for the restricted accounts real companies use, and closing a hole that had not yet caused a wrong answer.*
+
+## Interview story 48: proving a translation instead of trusting it
+
+Analysts wanted each answer's query in their own language: SQL Server, Oracle, MySQL, BigQuery, even
+MongoDB. A transpiler library does most of this, so the risk was trusting it. Reading its output engine
+by engine showed where it goes quietly wrong: Oracle and SQLite were given a BigQuery function, MySQL
+counted months from year 0 (rejected in strict mode), and BigQuery and SQL Server weeks started on
+Sunday while the answers used Monday weeks, so a weekly report would silently disagree. Those parts are
+now written by hand from each engine's documentation, dates are written so no session setting can change
+them, and a user's generated views are inlined so the query runs on their own tables. MongoDB pipelines
+are built from the metric definitions, and anything without an exact equivalent is refused with the
+reason. Precision is tested by running translations: the SQLite version on a copy of the warehouse
+returns DuckDB's rows exactly, and a live answer's PostgreSQL version, run on that PostgreSQL, returned
+the same numbers.
+*Shows: verifying generated code by executing it, and refusing to approximate where a wrong answer would look right.*
+
+## Interview story 49: a chart that hid a year
+
+The live dashboard was tested by inserting three orders dated today into a database whose other orders
+ended a year earlier. The new orders appeared, but the monthly line went straight from June 2025 to
+October 2026: the query returns only months that have rows, so fifteen empty months vanished and the
+line suggested continuity. Empty periods are now filled, with 0 for totals and counts (true) and no
+value for averages and ratios (an average of nothing is not zero). The same distinction decides whether
+a breakdown shows shares, because a share of an average means nothing.
+*Shows: testing with awkward data instead of tidy data, and knowing when zero is a fact and when it is a lie.*

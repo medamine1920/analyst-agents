@@ -332,3 +332,12 @@ def test_a_comparison_by_group_also_carries_the_total_change():
     assert totals == [{"metric": "revenue_pre_tax", "before": 37023.0, "after": 64006.0, "change": 26983.0,
                        "change_pct": 72.88}]
     assert "totals" in str(facts["computed_fields"])
+
+
+def test_sales_tax_means_the_tax_collected_not_revenue():
+    """'sales' used to win, so a question about sales tax was asked which revenue it meant."""
+    from app.agents.orchestrated.glossary import resolve_terms
+
+    found = resolve_terms("How much sales tax did we collect in March?")
+    assert found["ambiguities"] == []
+    assert [r["metrics"] for r in found["resolved"]] == [["tax_collected"]]

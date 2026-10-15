@@ -257,10 +257,12 @@ def build_graph(gateway: McpGateway, plan_fn: PlanFn, write_fn: WriteFn, checkpo
         for step in plan_obj.steps:
             calls.append("query_metrics")
             try:
+                await gateway.resolve_filters(step)  # 'brooklyn' -> 'Brooklyn', or the query finds nothing
                 results[step.id] = await gateway.run_step(step)
             except ValueError as exc:
                 errors.append(f"Step {step.id} failed: {str(exc)[:600]}")
-        return {"results": results, "feedback": errors, "tool_calls": calls}
+        # The plan as it ran, so the facts and the console show the repaired filter values.
+        return {"results": results, "feedback": errors, "tool_calls": calls, "plan": plan_obj.model_dump()}
 
     async def analyze(state: AnalystState) -> dict:
         context = await gateway.context()

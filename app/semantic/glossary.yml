@@ -5,6 +5,9 @@ entries:
   - terms: ["item revenue"]
     metrics: [item_revenue]
 
+  - terms: ["sales tax", "tax collected", "taxes collected", "vat"]
+    metrics: [tax_collected]
+
   - terms: [revenue, income, sales, turnover, takings]
     metrics: [revenue_pre_tax, revenue_with_tax]
     qualifiers:

@@ -277,3 +277,25 @@ async def test_a_replan_after_a_failed_query_reuses_the_choice_without_asking_ag
     assert state["plan"]["steps"][0]["metrics"] == ["revenue_with_tax"]
     assert has(state["facts"], 450969.65) and not has(state["facts"], 425467)
     assert state["answer"] == with_tax
+
+
+async def test_a_filter_value_is_matched_to_a_real_value_or_sent_back():
+    """MetricFlow answers a filter on 'brooklyn' (wrong case) with no rows, not an error, so an answer could
+    be built on nothing. Values are now matched to the ones that exist before the query runs."""
+    lower = {"question_type": "lookup", "steps": [{"id": "s", "purpose": "", "metrics": ["order_count"],
+                                                     "filters": [{"dimension": "store__store_name", "value": "brooklyn"}]}]}
+    state = await run("How many orders did Brooklyn have?", [lower], drafts=("Brooklyn had 22,017 orders.",))
+    assert state["facts"]["steps"][0]["rows"][0]["order_count"] == 22017
+    assert state["plan"]["steps"][0]["filters"][0]["value"] == "Brooklyn"  # repaired where everyone can see it
+
+    phrase = {**lower, "steps": [{**lower["steps"][0], "filters": [{"dimension": "store__store_name", "value": "Brooklyn store"}]}]}
+    state = await run("How many orders did the Brooklyn store have?", [phrase], drafts=("Brooklyn had 22,017 orders.",))
+    assert state["facts"]["steps"][0]["rows"][0]["order_count"] == 22017
+
+    typo = {**lower, "steps": [{**lower["steps"][0], "filters": [{"dimension": "store__store_name", "value": "Brookln"}]}]}
+    state = await run("How many orders did Brookln have?", [typo], drafts=("Brooklyn had 22,017 orders.",))
+    assert state["plan"]["steps"][0]["filters"][0]["value"] == "Brooklyn"  # one close spelling: repaired
+
+    unknown = {**lower, "steps": [{**lower["steps"][0], "filters": [{"dimension": "store__store_name", "value": "Boston"}]}]}
+    state = await run("How many orders did Boston have?", [unknown], drafts=("Boston had no orders.",))
+    assert state["plan"]["steps"][0]["filters"][0]["value"] == "Boston" and state["plan_attempts"] == 1  # left alone

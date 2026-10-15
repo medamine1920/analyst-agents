@@ -230,3 +230,54 @@ def test_distinct_counts_get_no_shares_of_a_total():
 
     catalog = {"sales_customer_id_distinct": {"type": "simple"}, "sales_amount_total": {"type": "simple"}}
     assert additive_metrics(catalog) == {"sales_amount_total"}
+
+
+# ---- numbers next to the wrong group or period --------------------------------------------------
+
+M06_FACTS = {"steps": [
+    {"id": "by_month_store", "period": "2025-03-01 to 2025-03-31", "rows": [
+        {"metric_time__month": "2025-03-01T00:00:00", "store__store_name": "Brooklyn", "new_customers": 255},
+        {"metric_time__month": "2025-03-01T00:00:00", "store__store_name": "Philadelphia", "new_customers": 28}]},
+    {"id": "by_store", "period": "all dates in the data", "rows": [
+        {"store__store_name": "Brooklyn", "new_customers": 493},
+        {"store__store_name": "Philadelphia", "new_customers": 442}]}]}
+
+
+@pytest.mark.parametrize(("answer", "flagged"), [
+    ("In March 2025 Brooklyn gained 493 new customers.", [493]),  # the m06 miss: all-time number given as March's
+    ("Philadelphia had 493 new customers over all dates.", [493]),  # Brooklyn's number given to Philadelphia
+    ("In March 2025 Brooklyn gained 255 new customers.", []),
+    ("Brooklyn has 493 new customers in all, 255 of them in March 2025.", []),  # two clauses, each right
+    ("In March Brooklyn gained 255 and Philadelphia 28 new customers.", []),
+    ("| Store | March 2025 | All dates |\n|---|---|---|\n| Brooklyn | 255 | 493 |\n| Philadelphia | 28 | 442 |", []),
+    ("| Store | March 2025 | All dates |\n|---|---|---|\n| Brooklyn | 493 | 255 |", [493, 255]),  # columns swapped
+])
+def test_numbers_must_sit_next_to_the_group_and_period_they_belong_to(answer, flagged):
+    from app.agents.orchestrated.review import misattributed
+
+    issues = misattributed(answer, M06_FACTS, "How many new customers did each store gain?")
+    assert sorted(i["number"] for i in issues) == sorted(flagged)
+
+
+def test_the_reviewer_reports_a_misattributed_number_with_the_right_one():
+    from app.agents.orchestrated.review import review_answer
+
+    issues = review_answer("In March 2025 Brooklyn gained 493 new customers.", M06_FACTS, "New customers?", [], {})
+    assert len(issues) == 1 and "493" in issues[0] and "255" in issues[0] and "Brooklyn" in issues[0]
+
+
+@pytest.mark.parametrize("answer", [
+    "Philadelphia led with **$10.61** versus $9.63 at Brooklyn.",  # the first number is the other store's
+    "| Store | Change |\n|---|---|\n| Brooklyn | 19,610.00 (100 % - no Feb activity) |",  # a comparison row's change
+])
+def test_comparisons_and_versus_sentences_are_not_misread(answer):
+    """Two false alarms found by running the check over every saved answer."""
+    from app.agents.orchestrated.review import misattributed
+
+    facts = {"steps": [{"id": "s", "period": "all dates in the data", "rows": [
+        {"store__store_name": "Brooklyn", "average_order_value": 9.6279, "revenue": 19610.0},
+        {"store__store_name": "Philadelphia", "average_order_value": 10.6057, "revenue": 44396.0}]}],
+        "comparisons": [{"before": "feb", "after": "mar", "rows": [
+            {"store__store_name": "Brooklyn", "metric": "revenue", "before": 0, "after": 19610.0, "change": 19610.0,
+             "change_pct": 100.0}]}]}
+    assert misattributed(answer, facts, "Which store?") == []
